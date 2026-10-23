@@ -23,6 +23,12 @@
 | Base 家族 | Base16(=Hex)、32、32hex、36、45、58、62、64、64URL、85、91、92、100 |
 | 其它编码 | URL、HTML 实体、Unicode 转义、Quoted-Printable、xxencode、uuencode、Punycode、**UTF-7**、JS 转义、**猪圈密码**、**NATO 音标**、**DNA 密码**、**元素周期表**、**博多码 Baudot**、**格雷码**、**BCD**、**Cisco Type7**、**keyCode**、**Deadfish**、**Dvorak 键盘**、**base64 大小写错乱**、**Base64 自定义编码表**、**ASCII 偏移**、Malbolge（识别）|
 | **中文编码** | **GB2312 区位码**（十进制/十六进制互转）、**天干地支**（60 甲子，干支↔序号）、**伏羲六十四卦**（二进制↔卦名）、**百家姓**（486 姓，序号↔姓氏）、**中文电码**、**笔画码**（1横2竖3撇4点5折）|
+| **压缩流** | **gzip / zlib / bzip2 / xz / lzma**（base64 或 hex 包裹，解出的内部若是压缩文件会继续剥）|
+| **裸二进制** | **LEB128 / varint**、**IEEE754 单双精度**、字节序翻转、位运算（xor/and/or/rol/ror）、进制互转、**字节频率与字符集识别**、01 串的 7 种读法 |
+| **十六进制查询** | hexdump、**按 ascii/hex/utf16/正则搜偏移**、**双文件 hex diff**、任意偏移 magic 识别、提取/ patch |
+| **文件合并** | **拼接切分**（按 21 种文件签名）、**N 路按块交错还原**、自动探测合并方式、反向合并构造 |
+| **文件隐写增强** | **纯 Python PNG LSB**（不依赖 Pillow）、**PNG 块级体检**（CRC 错/私有块/顺序错）、**ZIP 全局与文件注释**、GIF 帧间差异 |
+| **逆向增强** | **Go / Rust 二进制专用字符串**（不以 \x00 结尾，系统 strings 会粘连漏短串）、**ELF 详情**（入口点/节表/动态符号）|
 | **古典密码** | 凯撒（25 位移）、仿射（312 组合）、**维吉尼亚（自动猜密钥）**、Atbash、ROT13/47/5、栅栏（2–12 栏）、**斯巴达棒**、**列换位**、培根、A1Z26（**含连写拆分**）、**希尔（矩阵）**、Playfair、Beaufort、Porta、Gronsfeld、Bifid、**四方密码（双密钥）**、**分数摩尔**、**ADFGX**、**ADFGVX**、**Autokey 自动密钥**、**Nihilist 虚无者**、**Enigma M3**（转子 I/II/III + 反射板 B）、键盘左右移位、反转 |
 | **单表替换** | 任意替换表，用「词形匹配 + 英文四元组统计 + 模拟退火」求解（对标 quipqiup） |
 | 特殊语言 | 摩斯电码、二进制、八进制、十进制 ASCII、Brainfuck、Ook! |
@@ -107,6 +113,9 @@ FlagRush/
 │   ├── crypto.py            # 编码/密码：A* 搜索、多检查器、crib
 │   ├── classic.py           # 古典密码库（含希尔、单表替换、Enigma、ADFGVX）
 │   ├── cncode.py            # 中文编码（区位码/干支/六十四卦/百家姓/电码/笔画）
+│   ├── binx.py              # 裸二进制（LEB128/IEEE754/字节序/位运算/频率）
+│   ├── hexq.py              # 十六进制查询（hexdump/搜偏移/diff/magic）
+│   ├── filemerge.py         # 文件合并与拆分（拼接/交错/自动探测）
 │   ├── quadgram.py          # 英文四元组统计表（单表替换求解用）
 │   ├── wordfreq.py          # 10000 常用词 + CTF 术语表
 │   ├── misc.py              # 综合面板总入口

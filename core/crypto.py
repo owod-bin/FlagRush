@@ -2248,13 +2248,105 @@ def _t_encmore(s):
         return []
 
 
+# ==================== 压缩流解码 ====================
+# CTF 极高频：flag 被 gzip/zlib/bz2/xz/lzma 压一遍再 base64/hex 包一层。
+# Ciphey 也把这类当解码器（XZ/LZMA/gzip/zlib/bzip2），且解出来的内部
+# 若是压缩文件会继续传递 —— 我们的 peel/A* 天然支持链式，注册进 DET 即可。
+_COMPRESS_MAGIC = {
+    "gzip": (b"\x1f\x8b", "H4sI"),
+    "zlib": (b"\x78\x9c", "eJ"),
+    "zlib-best": (b"\x78\xda", "eNo"),
+    "zlib-low": (b"\x78\x01", "eH"),
+    "bzip2": (b"BZh", "Qlpa"),
+    "xz": (b"\xfd7zXZ\x00", "/Td6WFoA"),
+    "lzma": (b"\x5d\x00\x00", "XQ"),
+}
+
+
+def _decompress_any(raw):
+    """对一段字节尝试所有解压方式，返回 [(算法名, 解出的 bytes)]"""
+    import bz2
+    import gzip
+    import lzma
+    import zlib
+    out = []
+    tries = [
+        ("gzip", lambda d: gzip.decompress(d)),
+        ("zlib", lambda d: zlib.decompress(d)),
+        ("zlib-raw", lambda d: zlib.decompressobj(-15).decompress(d)),
+        ("bzip2", lambda d: bz2.decompress(d)),
+        ("xz", lambda d: lzma.decompress(d)),
+        ("lzma-alone", lambda d: lzma.decompress(d, format=lzma.FORMAT_ALONE)),
+    ]
+    for name, fn in tries:
+        try:
+            d = fn(raw)
+        except Exception:
+            continue
+        if d and len(d) < 4 * 1024 * 1024:
+            out.append((name, d))
+    return out
+
+
+def _t_compress(s):
+    """压缩流解码：输入是 base64/hex 包裹的压缩数据，或原始压缩字节。"""
+    t = s.strip()
+    if len(t) < 8 or len(t) > 2_000_000:
+        return []
+    # 1) 先看有没有「base64 形式的压缩魔数」——最强的特征，命中就直接解
+    quick = None
+    for name, (_raw_magic, b64_head) in _COMPRESS_MAGIC.items():
+        if t.startswith(b64_head):
+            quick = name
+            break
+    # 2) 把文本还原成可能的二进制
+    cands = []
+    h = re.sub(r"[^0-9A-Fa-f]", "", t)
+    if len(h) >= 16 and len(h) % 2 == 0:
+        try:
+            cands.append(bytes.fromhex(h))
+        except Exception:
+            pass
+    try:
+        import base64
+        pad = t + "=" * (-len(t) % 4)
+        b = base64.b64decode(pad, validate=False)
+        if len(b) >= 8:
+            cands.append(b)
+    except Exception:
+        pass
+    cands.append(t.encode("latin-1", "ignore"))
+
+    out = []
+    seen = set()
+    for raw in cands:
+        if len(raw) < 6:
+            continue
+        for name, d in _decompress_any(raw):
+            # 解出来是二进制就按 latin-1 看，是文本最好
+            try:
+                txt = d.decode("utf-8")
+            except Exception:
+                txt = d.decode("latin-1", "ignore")
+            if not txt or txt == t:
+                continue
+            key = txt[:64]
+            if key in seen:
+                continue
+            seen.add(key)
+            printable = sum(1 for c in txt[:200] if 32 <= ord(c) < 127 or c in "\r\n\t")
+            if printable / max(min(len(txt), 200), 1) > 0.6:
+                out.append(("%s 解压%s" % (name, "（base64 魔数命中）" if quick else ""), txt))
+    return out
+
+
 DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_url, _t_b16, _t_b64, _t_b32, _t_b85, _t_b58, _t_b62, _t_b36, _t_b45, _t_b91,
        _t_uu, _t_unicode, _t_html, _t_qp, _t_morse, _t_binary, _t_octal, _t_dec,
        _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore,
        _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
        _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
-       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode]
+       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode, _t_compress]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
 def _t_utf7(s):

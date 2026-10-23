@@ -234,6 +234,21 @@ add("中文电码", "0022 0947 0032", [])
 add("笔画码", "1121 121 251", [])
 
 
+# ---------- 18. 压缩流 / Z85 / MIME ----------
+import base64 as _b64
+import gzip as _gzip
+import zlib as _zlib
+import bz2 as _bz2
+add("gzip+base64", _b64.b64encode(_gzip.compress(b"flag{gzip_layer}")).decode(), [])
+add("zlib+base64", _b64.b64encode(_zlib.compress(b"flag{zlib_layer}")).decode(), [])
+add("bzip2+base64", _b64.b64encode(_bz2.compress(b"flag{bz2_layer}")).decode(), [])
+add("gzip+hex", _gzip.compress(b"flag{hex_gzip}").hex(), [])
+_nested = _b64.b64encode(_gzip.compress(_b64.b64encode(b"flag{triple_nest}"))).decode()
+add("base64(gzip(base64))", _nested, [])
+add("Z85", "w]7)*DWmUeuVf.d", [])
+add("MIME Encoded-Word", "=?utf-8?B?ZmxhZ3ttaW1lX2VuY29kZWR9?=", [])
+
+
 def main():
     ok = 0
     rows = []

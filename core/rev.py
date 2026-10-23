@@ -1019,6 +1019,209 @@ def _pyz_list(blob):
         return []
 
 
+# ==================== Go / Rust 字符串提取 ====================
+# 为什么单列一节：Go 和 Rust 的字符串都是 (ptr, len) 结构，常量区里**不以 \x00 结尾**，
+# 相邻字符串常常紧挨着存放。系统 strings 靠「可打印序列 + 最小长度」抓，
+# 结果是把好几条短串粘成一条长串，或者把长度 <5 的短串（flag 前缀、密钥）整条漏掉。
+# 这里改成「可打印序列 + 额外切分」：先用常规方式抓长串，再把每条长串按
+# 常见分隔特征（连续大写开头、\x00、长度突变）二次切分。
+
+def _is_go_binary(data):
+    if len(data) < 64:
+        return False
+    marks = (b"Go build ID", b"\xff Go buildinf", b".gopclntab",
+             b"go:buildid", b"runtime.main", b"runtime.pkgpath")
+    # 只认二进制：这些字面量在本文件源码里就全有，不限定 ELF/PE 会自我误报
+    if data[:4] != b"\x7fELF" and data[:2] != b"MZ":
+        return False
+    hit = sum(1 for m in marks if m in data)
+    return hit >= 1
+
+
+def _is_rust_binary(data):
+    if len(data) < 64:
+        return False
+    marks = (b"rustc", b"/rustc/", b"library/std/src", b"library/core/src",
+             b"panicked at", b"cargo/registry")
+    hit = sum(1 for m in marks if m in data)
+    return hit >= 1 and (b"\x7fELF" == data[:4] or b"MZ" == data[:2] or hit >= 2)
+
+
+def _split_glued(long_s, minlen=3):
+    """把粘在一起的多条短串切开。
+
+    Go/Rust 的常量区里字符串常紧邻存放，strings 会输出
+    "flag{xxx}secretkeypassword" 这种。这里按几条经验规则二次切：
+      - 大写字母开头的新词（骆驼峰式符号名边界）
+      - 常见分隔：括号、斜杠、点号后跟小写
+    规则宁少勿滥：切错了比不切更糟，所以只在高置信边界切。
+    """
+    out = []
+    cur = []
+    for i, c in enumerate(long_s):
+        cur.append(c)
+        if len(cur) < minlen:
+            continue
+        nxt = long_s[i + 1] if i + 1 < len(long_s) else ""
+        prev = long_s[i - 1] if i > 0 else ""
+        # 边界：小写 -> 大写（且不是全大写串的开头）
+        if (c.islower() and nxt.isupper()
+                and not (prev.isupper() and len(cur) > 1 and cur[-2].isupper())):
+            out.append("".join(cur))
+            cur = []
+        # 边界：标点 -> 字母
+        elif (not c.isalnum() and c in ")}];:" and nxt.isalnum() and len(cur) >= minlen):
+            out.append("".join(cur))
+            cur = []
+    if cur:
+        out.append("".join(cur))
+    return [x for x in out if len(x) >= minlen]
+
+
+def go_strings(data, minlen=3, limit=4000):
+    """Go 二进制专用字符串提取：minlen 降到 3，并对长串做二次切分"""
+    out = []
+    for m in re.finditer(rb"[\x20-\x7e]{%d,}" % minlen, data):
+        out.append((m.start(), m.group().decode("latin-1")))
+    # 二次切分：把 strings 粘在一起的长串拆开
+    split = []
+    for off, s in out:
+        if len(s) > 24:
+            for piece in _split_glued(s, minlen):
+                if piece != s:
+                    split.append((off, piece))
+        elif len(s) >= minlen:
+            split.append((off, s))
+    # 去重（同偏移同内容）
+    seen = set()
+    res = []
+    for off, s in split:
+        k = (off, s)
+        if k in seen:
+            continue
+        seen.add(k)
+        res.append((off, s))
+    return res[:limit]
+
+
+def rust_strings(data, minlen=3, limit=4000):
+    """Rust 二进制：和 Go 同样的问题，另外 Rust 的符号名带 :: 和 hash 后缀"""
+    return go_strings(data, minlen=minlen, limit=limit)
+
+
+def lang_report(data):
+    """识别二进制是 Go / Rust / C++ 写的，返回 (语言, 说明)"""
+    go = _is_go_binary(data)
+    ru = _is_rust_binary(data)
+    if go and ru:
+        return "Go+Rust 混合", "同时含 Go 和 Rust 特征（可能是 Rust 写的工具链里嵌了 Go 组件）"
+    if go:
+        return "Go", "Go 二进制的字符串不以 \x00 结尾，strings 会粘连/漏短串，已用 go_strings 重新提取"
+    if ru:
+        return "Rust", "Rust 二进制同理，符号名带 :: 和 hash 后缀"
+    return None, None
+
+
+# ==================== ELF 详情 ====================
+
+def elf_info(data):
+    """ELF 关键信息：入口点、程序头、节表、动态符号、PLT。
+
+    返回 [(小节名, [行])]，给逆向时快速定位用。
+    """
+    lines = []
+    try:
+        if len(data) < 64 or data[:4] != b"\x7fELF":
+            return []
+        cls = data[4]           # 1=32 位 2=64 位
+        e = "<" if data[5] == 1 else ">"
+        bits = 32 if cls == 1 else 64
+        if bits == 64:
+            entry = struct.unpack_from(e + "Q", data, 24)[0]
+            ph_off = struct.unpack_from(e + "Q", data, 32)[0]
+            sh_off = struct.unpack_from(e + "Q", data, 40)[0]
+            ph_entsize, ph_num = struct.unpack_from(e + "HH", data, 54)
+            sh_entsize, sh_num = struct.unpack_from(e + "HH", data, 58)
+            shstr_ndx = struct.unpack_from(e + "H", data, 62)[0]
+        else:
+            entry = struct.unpack_from(e + "I", data, 24)[0]
+            ph_off = struct.unpack_from(e + "I", data, 28)[0]
+            sh_off = struct.unpack_from(e + "I", data, 32)[0]
+            ph_entsize, ph_num = struct.unpack_from(e + "HH", data, 42)
+            sh_entsize, sh_num = struct.unpack_from(e + "HH", data, 46)
+            shstr_ndx = struct.unpack_from(e + "H", data, 50)[0]
+        lines.append("ELF%d %s端  入口点 0x%x" % (bits, "小" if e == "<" else "大", entry))
+        etype = struct.unpack_from(e + "H", data, 16)[0]
+        lines.append("类型：%s" % {1: "可重定位目标文件(.o)", 2: "可执行文件",
+                                 3: "共享库(PIE)", 4: "核心转储"}.get(etype, str(etype)))
+
+        # 节名表
+        shstr = b""
+        if shstr_ndx < sh_num:
+            p = sh_off + shstr_ndx * sh_entsize
+            if bits == 64:
+                o, sz = struct.unpack_from(e + "QQ", data, p + 24)
+            else:
+                o, sz = struct.unpack_from(e + "II", data, p + 16)
+            shstr = data[o:o + sz]
+
+        def _name(off):
+            end = shstr.find(b"\x00", off)
+            return shstr[off:end].decode("latin-1") if end >= 0 else "?"
+
+        # 节表
+        secs = []
+        for i in range(sh_num):
+            p = sh_off + i * sh_entsize
+            if p + sh_entsize > len(data):
+                break
+            nmoff = struct.unpack_from(e + "I", data, p)[0]
+            if bits == 64:
+                typ, flags, addr, off, size = struct.unpack_from(e + "IQQQQ", data, p + 4)
+            else:
+                typ, flags, addr, off, size = struct.unpack_from(e + "IIIII", data, p + 4)
+            secs.append((_name(nmoff), typ, addr, off, size))
+        interesting = [x for x in secs if x[0] in (
+            ".text", ".rodata", ".data", ".bss", ".plt", ".plt.sec", ".got",
+            ".got.plt", ".init", ".fini", ".dynsym", ".dynstr", ".symtab",
+            ".strtab", ".gopclntab", ".go.buildinfo", ".comment")]
+        if interesting:
+            lines.append("关键节：")
+            for nm, typ, addr, off, size in interesting:
+                lines.append("  %-16s addr=0x%-10x off=0x%-8x size=%d" % (nm, addr, off, size))
+
+        # 动态符号（导入函数）
+        dyn = [x for x in secs if x[0] == ".dynsym"]
+        if dyn:
+            _, _, _, off, size = dyn[0]
+            cnt = size // 24 if bits == 64 else size // 16
+            names = []
+            for i in range(min(cnt, 200)):
+                p = off + i * (24 if bits == 64 else 16)
+                if p + (24 if bits == 64 else 16) > len(data):
+                    break
+                stroff = struct.unpack_from(e + "I", data, p)[0]
+                nm = _dynstr_name(data, secs, stroff, e)
+                if nm and nm not in names:
+                    names.append(nm)
+            if names:
+                lines.append("动态符号（%d 个，前 25）：%s" % (
+                    len(names), ", ".join(names[:25])))
+    except Exception:
+        pass
+    return lines
+
+
+def _dynstr_name(data, secs, stroff, e):
+    for nm, typ, addr, off, size in secs:
+        if nm in (".dynstr", ".strtab"):
+            end = data.find(b"\x00", off + stroff)
+            if end < 0:
+                return None
+            return data[off + stroff:end].decode("latin-1")
+    return None
+
+
 def analyze(path):
     rep = {"title": os.path.basename(path), "lines": [], "warn": [], "hits": [],
            "suggest": []}

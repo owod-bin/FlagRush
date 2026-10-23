@@ -202,6 +202,298 @@ def _deinterlace(px, w, h):
     return out
 
 
+# ------------------------------------------------------------------ PNG 像素（纯 Python，不用 Pillow）
+def png_pixels(data):
+    """解析 PNG 的 IDAT，返回 (宽, 高, 每行 RGB bytes 列表)。不用 Pillow。"""
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    pos = 8
+    idat = b""
+    w = h = bd = ct = None
+    while pos + 8 <= len(data):
+        ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        typ = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + ln]
+        if typ == b"IHDR":
+            w, h, bd, ct = struct.unpack(">IIBB", body[:10])
+        elif typ == b"IDAT":
+            idat += body
+        elif typ == b"IEND":
+            break
+        pos += 12 + ln
+    if not w or bd != 8 or ct not in (2, 6):
+        return None
+    try:
+        raw = zlib.decompress(idat)
+    except Exception:
+        return None
+    nch = 3 if ct == 2 else 4
+    stride = w * nch
+    rows = []
+    prev = bytearray(stride)
+    i = 0
+    for _ in range(h):
+        if i >= len(raw):
+            break
+        ft = raw[i]
+        i += 1
+        line = bytearray(raw[i:i + stride])
+        i += stride
+        if len(line) < stride:
+            line += bytearray(stride - len(line))
+        if ft == 1:                      # Sub
+            for x in range(nch, stride):
+                line[x] = (line[x] + line[x - nch]) & 0xFF
+        elif ft == 2:                    # Up
+            for x in range(stride):
+                line[x] = (line[x] + prev[x]) & 0xFF
+        elif ft == 3:                    # Average
+            for x in range(stride):
+                a = line[x - nch] if x >= nch else 0
+                line[x] = (line[x] + ((a + prev[x]) >> 1)) & 0xFF
+        elif ft == 4:                    # Paeth
+            for x in range(stride):
+                a = line[x - nch] if x >= nch else 0
+                b = prev[x]
+                c = prev[x - nch] if x >= nch else 0
+                pp = a + b - c
+                pa, pb, pc = abs(pp - a), abs(pp - b), abs(pp - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[x] = (line[x] + pr) & 0xFF
+        rows.append(bytes(line))
+        prev = line
+    return w, h, rows, nch
+
+
+def png_lsb_pure(path, bits=1, channels="RGB", row_major=True):
+    """纯 Python 从 PNG 提 LSB 位，拼成字节。
+
+    bits: 每通道取低几位（1 最常见）
+    channels: 取哪些通道
+    返回 [(方案名, bytes)]，多种位序/通道组合都试
+    """
+    data = open(path, "rb").read()
+    r = png_pixels(data)
+    if not r:
+        return []
+    w, h, rows, nch = r
+    ch_idx = {"R": 0, "G": 1, "B": 2, "A": 3}
+    sel = [ch_idx[c] for c in channels if c in ch_idx and ch_idx[c] < nch] or [0, 1, 2]
+    out = []
+    for order in ("先行后列", "先列后行"):
+        for msb_first in (True, False):
+            stream = []
+            coords = ([(y, x) for y in range(h) for x in range(w)] if order == "先行后列"
+                      else [(y, x) for x in range(w) for y in range(h)])
+            for (y, x) in coords:
+                if y >= len(rows):
+                    continue
+                px = rows[y][x * nch:(x + 1) * nch]
+                for ci in sel:
+                    if ci >= len(px):
+                        continue
+                    v = px[ci]
+                    for b in range(bits):
+                        bit = (v >> b) & 1
+                        stream.append(bit)
+            n = len(stream) // 8 * 8
+            by = bytearray()
+            for i in range(0, n, 8):
+                v = 0
+                for j, bit in enumerate(stream[i:i + 8]):
+                    pos = j if msb_first else 7 - j
+                    v |= bit << pos
+                by.append(v)
+            if by:
+                out.append(("LSB %d 位 %s %s %s" % (
+                    bits, "".join(channels), order,
+                    "高位在前" if msb_first else "低位在前"), bytes(by)))
+    return out
+
+
+def lsb_to_text(by):
+    """从 LSB 提出的字节里取出可读部分。
+
+    注意不能要求「整串都可打印」：LSB 提出来常见是「前几个字节是数据，
+    后面全是填充零」，整串可打印率往往不到 5%。
+    正确做法是找**最长的可打印前缀/片段**。
+    """
+    if not by:
+        return None
+    try:
+        t = by.decode("utf-8")
+    except Exception:
+        t = by.decode("latin-1", "ignore")
+    # 全串都可打印，直接返回
+    if all(32 <= ord(c) < 127 or c in "\r\n\t" for c in t):
+        return t
+    # 否则取最长的连续可打印片段
+    best = ""
+    cur = ""
+    for c in t:
+        if 32 <= ord(c) < 127 or c in "\r\n\t":
+            cur += c
+            if len(cur) > len(best):
+                best = cur
+        else:
+            cur = ""
+    return best if len(best) >= 4 else None
+
+
+# ------------------------------------------------------------------ GIF 帧间差异
+def gif_frame_diff(frame_paths, outdir=None):
+    """比较 GIF 各帧的像素差异 —— CTF 常把数据藏在「只有第 N 帧不同」的像素里。
+
+    需要 Pillow；没装就只报告文件大小/哈希差异。
+    """
+    if not frame_paths or len(frame_paths) < 2:
+        return False, [], "帧数不足"
+    outdir = outdir or os.path.dirname(os.path.abspath(frame_paths[0]))
+    base = os.path.splitext(os.path.basename(frame_paths[0]))[0].replace("_帧01", "")
+    if Image is None:
+        # 没有 Pillow：退化成按文件哈希找「不一样的帧」
+        import hashlib
+        hs = [hashlib.md5(open(f, "rb").read()).hexdigest() for f in frame_paths]
+        uniq = len(set(hs))
+        return True, [], f"没装 Pillow，只比了文件哈希：{len(frame_paths)} 帧里 {uniq} 个不同"
+    try:
+        imgs = [Image.open(f).convert("RGB") for f in frame_paths]
+    except Exception as e:
+        return False, [], f"打不开帧：{e}"
+    w, h = imgs[0].size
+    if w * h > 4_000_000:
+        return False, [], "图片太大，跳过帧间比较"
+    first = imgs[0].tobytes()
+    files = []
+    diffs = []
+    for i, im in enumerate(imgs[1:], 2):
+        cur = im.tobytes()
+        if cur == first:
+            diffs.append((i, 0))
+            continue
+        # 生成差异掩码图：不同的像素标红
+        mask = Image.new("RGB", (w, h))
+        mp = mask.load()
+        cnt = 0
+        for y in range(h):
+            for x in range(w):
+                o = (y * w + x) * 3
+                if cur[o:o + 3] != first[o:o + 3]:
+                    mp[x, y] = (255, 0, 0)
+                    cnt += 1
+                else:
+                    mp[x, y] = (0, 0, 0)
+        diffs.append((i, cnt))
+        if cnt and cnt < w * h * 0.5:
+            f = os.path.join(outdir, f"{base}_帧{i:02d}差异.png")
+            mask.save(f)
+            files.append(f)
+    lines = [f"第 {i} 帧与第 1 帧差 {cnt} 像素" for i, cnt in diffs if cnt]
+    if not lines:
+        lines = ["各帧像素完全一致（数据不在帧间差异里）"]
+    return True, files, "；".join(lines[:6])
+
+
+# ------------------------------------------------------------------ PNG 异常块
+def png_anomaly(data):
+    """PNG 块级体检：CRC 错、块名乱写、块顺序错、多余的私有块。
+
+    CTF 常用手法：故意把 CRC 写错让看图软件拒渲染，数据藏在「看起来损坏」的块里；
+    或者塞一个名字很怪的私有块（如 cHJ2 / FlAg）。
+    """
+    out = []
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return out
+    STANDARD = {b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA", b"cHRM",
+                b"sRGB", b"iCCP", b"tEXt", b"zTXt", b"iTXt", b"bKGD", b"pHYs",
+                b"sBIT", b"hIST", b"tIME", b"pHYg"}
+    pos = 8
+    seen_idat = False
+    seen_iend = False
+    idx = 0
+    while pos + 8 <= len(data):
+        ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        typ = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + ln]
+        crc = struct.unpack(">I", data[pos + 8 + ln:pos + 12 + ln])[0] if pos + 12 + ln <= len(data) else None
+        calc = zlib.crc32(typ + body) & 0xFFFFFFFF
+        idx += 1
+        if crc is not None and crc != calc:
+            out.append(("块 %d %s：CRC 错（写的 %08x，实际 %08x）—— 常是故意改坏藏数据"
+                        % (idx, typ.decode("latin-1"), crc, calc), body))
+        if typ not in STANDARD:
+            out.append(("块 %d %s：非标准私有块（题目自造的，重点看）"
+                        % (idx, typ.decode("latin-1")), body))
+        if typ == b"IDAT":
+            seen_idat = True
+        if typ == b"IEND":
+            seen_iend = True
+            break
+        if seen_idat and typ in (b"IHDR", b"PLTE"):
+            out.append(("块 %d %s：顺序不对（IDAT 之后不该出现）" % (idx, typ.decode("latin-1")), body))
+        pos += 12 + ln
+    if not seen_iend:
+        out.append(("没有 IEND 块（文件被截断，或尾部还接着别的内容）", b""))
+    return out
+
+
+# ------------------------------------------------------------------ ZIP 注释 / 附加数据
+def zip_secrets(data):
+    """ZIP 的注释隐写：全局注释（EOCD 注释）、每个文件的注释、文件头后的附加数据。
+
+    CTF 常把 flag 写进 zip 注释 —— 用 unzip -l 看不到，用 binwalk 也未必报。
+    """
+    out = []
+    if data[:2] != b"PK" and b"PK\x03\x04" not in data:
+        return out
+    # 1) 全局注释：EOCD 结构 22 字节 + 注释
+    i = data.rfind(b"PK\x05\x06")
+    if i >= 0 and i + 22 <= len(data):
+        clen = struct.unpack_from("<H", data, i + 20)[0]
+        if clen and i + 22 + clen <= len(data):
+            cm = data[i + 22:i + 22 + clen]
+            out.append(("ZIP 全局注释（%d 字节）" % clen, cm))
+    # 2) 每个本地文件头的注释长度字段（一般是 0，非 0 就是藏了东西）
+    pos = 0
+    n = 0
+    while True:
+        j = data.find(b"PK\x03\x04", pos)
+        if j < 0 or n > 64:
+            break
+        n += 1
+        if j + 30 <= len(data):
+            nlen, elen = struct.unpack_from("<HH", data, j + 26)
+            csize = struct.unpack_from("<I", data, j + 18)[0]
+            name = data[j + 30:j + 30 + nlen]
+            extra = data[j + 30 + nlen:j + 30 + nlen + elen]
+            # 中央目录头的注释长度（在中央目录里）。
+            # 不能只 find 第一个 PK\x01\x02 —— 多文件 zip 里要为这个文件
+            # 找到对应的中央目录项（按文件名匹配），否则只会看到第一个文件的注释。
+            ccomment = b""
+            k = data.find(b"PK\x01\x02")
+            while k >= 0 and k + 46 <= len(data):
+                cnlen = struct.unpack_from("<H", data, k + 32)[0]
+                cn_nlen = struct.unpack_from("<H", data, k + 28)[0]
+                cn_elen = struct.unpack_from("<H", data, k + 30)[0]
+                if data[k + 46:k + 46 + cn_nlen] == name and cnlen:
+                    st = k + 46 + cn_nlen + cn_elen
+                    ccomment = data[st:st + cnlen]
+                    break
+                k = data.find(b"PK\x01\x02", k + 4)
+            if ccomment:
+                out.append(("ZIP 文件 %r 的中央目录注释" % name[:40], ccomment))
+            if extra:
+                out.append(("ZIP 文件 %r 的扩展字段（%d 字节）" % (name[:40], len(extra)), extra))
+            # 压缩数据之后是否还接着额外字节（有的题在这里藏）
+            body_end = j + 30 + nlen + elen + csize
+            nxt = data.find(b"PK\x03\x04", body_end)
+            tail = data[body_end:nxt] if nxt > 0 else data[body_end:]
+            if 0 < len(tail) <= 4096 and tail.strip(b"\x00"):
+                out.append(("ZIP 文件 %r 压缩数据后的附加字节（%d 字节）" % (name[:40], len(tail)), tail))
+        pos = j + 4
+    return out
+
+
 # ------------------------------------------------------------------ 位平面
 def bitplanes(path, outdir=None):
     """

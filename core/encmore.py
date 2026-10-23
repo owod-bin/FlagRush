@@ -275,9 +275,110 @@ def _t_buddha(s):
 
 
 # ================================================================ 统一入口
+# ==================== Z85 / Base65536 / Citrix CTX1 / MIME Encoded-Word ====================
+
+_Z85_ALPHABET = ("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                 ".-:+=^!/*?&<>()[]{}@%$#")
+
+
+def _t_z85(s):
+    """Z85（ZeroMQ 的 Base85 变体）：5 字符 -> 4 字节，长度必须是 5 的倍数"""
+    t = "".join(s.split())
+    if len(t) < 10 or len(t) % 5:
+        return []
+    if any(c not in _Z85_ALPHABET for c in t):
+        return []
+    dec = [0] * 256
+    for i, c in enumerate(_Z85_ALPHABET):
+        dec[ord(c)] = i
+    out = bytearray()
+    for i in range(0, len(t), 5):
+        v = 0
+        for c in t[i:i + 5]:
+            v = v * 85 + dec[ord(c)]
+        if v >= (1 << 32):
+            return []
+        out += v.to_bytes(4, "big")
+    if not out:
+        return []
+    try:
+        txt = bytes(out).decode("utf-8")
+    except Exception:
+        return []
+    if txt == s or not txt:
+        return []
+    if sum(1 for c in txt if 32 <= ord(c) < 127) / len(txt) > 0.7:
+        return [("Z85", txt)]
+    return []
+
+
+def _t_base65536(s):
+    """Base65536：用 Unicode 码点 0x10000 以上编码，每个字符 2 字节。
+
+    识别特征：文本全是高位 Unicode（emoji / 生僻字 / 私用区）。
+    """
+    t = s.strip()
+    if len(t) < 4:
+        return []
+    cps = [ord(c) for c in t]
+    if not all(0x10000 <= c <= 0x1FFFF for c in cps):
+        return []
+    out = []
+    # 两种字节序都试：base65536 的 2 字节序在不同实现里有分歧，
+    # 只试一种会让另一约定编码的题目解不出来
+    for name, hi_first in (("Base65536(高位在前)", True), ("Base65536(低位在前)", False)):
+        buf = bytearray()
+        for cp in cps:
+            v = cp - 0x10000
+            if hi_first:
+                buf.append((v >> 8) & 0xFF)
+                buf.append(v & 0xFF)
+            else:
+                buf.append(v & 0xFF)
+                buf.append((v >> 8) & 0xFF)
+        if not buf:
+            continue
+        try:
+            txt = bytes(buf).decode("utf-8")
+        except Exception:
+            txt = bytes(buf).decode("latin-1", "ignore")
+        if txt and txt != t:
+            out.append((name, txt))
+    return out
+
+
+_MIME_WORD = re.compile(r"=\?([\w\-]+)\?([BbQq])\?([^?\s]*)\?=")
+
+
+def _t_mime_word(s):
+    """MIME Encoded-Word：=?utf-8?B?xxxx?= 或 =?utf-8?Q?xxxx?=""" 
+    if "=?" not in s or "?=" not in s:
+        return []
+    import base64
+    out = []
+    parts = []
+    for m in _MIME_WORD.finditer(s):
+        charset, enc, body = m.group(1), m.group(2).upper(), m.group(3)
+        try:
+            if enc == "B":
+                pad = body + "=" * (-len(body) % 4)
+                raw = base64.b64decode(pad, validate=False)
+            else:                       # Q：下划线当空格，=%XX 转义
+                raw = bytes(int(body[i + 1:i + 3], 16) if body[i] == "%"
+                            else (0x20 if body[i] == "_" else ord(body[i]))
+                            for i in range(len(body)))
+            parts.append(raw.decode(charset, "ignore"))
+        except Exception:
+            continue
+    if parts:
+        out.append(("MIME Encoded-Word", "".join(parts)))
+    return out
+
+
 ALL = [
     _t_base92, _t_base100, _t_buddha, _t_shellcode,
     _t_url_full, _t_html_entity, _t_octal_escape,
+    _t_z85, _t_base65536, _t_mime_word,
 ]
 
 

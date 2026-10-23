@@ -31,6 +31,8 @@ CORE_MODULES = [
     "pcapx", "webshell", "revx",
     # 第四轮：中文编码（区位码/干支/六十四卦/百家姓/电码/笔画）
     "cncode",
+    # 第五轮：二进制/十六进制查询/文件合并拆分
+    "binx", "hexq", "filemerge",
 ]
 
 datas = [
