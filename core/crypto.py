@@ -206,7 +206,9 @@ def score(s):
     # 门槛从 8 降到 4：UTF-7 的 "+Ti1lh21Li9U-" 解开只有 4 个汉字，
     # 卡在 8 字门槛上导致中文解永远排在 ROT 变体后面。
     if _cjk_ratio(s) > 0.35 and L >= 4:
-        sc += 4.0
+        # 2.5 而不是 4.0：ROT47 之类的变换能把数字密文搓成一串汉字
+        # （实测 48656c6c6f -> 丁卯丁卯庚午），给太高会把英文/数字正解压下去
+        sc += 2.5
     printable = sum(1 for c in s if c.isprintable() or c in "\r\n\t")
     sc += printable / L * 2.0
     letters = sum(1 for c in s if c.isalpha())
@@ -294,7 +296,9 @@ def score(s):
         allowed = set(" \r\n\t.,!?;:'\"-()")
         nonletter = sum(1 for c in s if not c.isalpha() and c not in allowed)
         ratio = nonletter / max(L, 1)
-        if ratio > 0.22:
+        # 纯数字答案豁免：CTF 的答案经常就是一串数字（干支/百家姓/电码解出来
+        # 都是序号），以前一刀切扣 12*ratio 会把 "12345" 这种正解直接打死。
+        if ratio > 0.22 and not s.isdigit():
             sc -= (ratio - 0.22) * 12.0
     # 符号密度过高（乱码特征）
     sym = sum(1 for c in s if c in "|\\^~`@#$%&*")
@@ -2068,6 +2072,14 @@ except Exception:
         cnenc = None
 
 try:
+    import cncode
+except Exception:
+    try:
+        from . import cncode
+    except Exception:
+        cncode = None
+
+try:
     import classic
 except Exception:
     try:
@@ -2208,6 +2220,16 @@ def _t_classic(s):
         return []
 
 
+def _t_cncode(s):
+    """中文编码：区位码 / 天干地支 / 伏羲六十四卦 / 百家姓 / 中文电码 / 笔画码"""
+    if not cncode or len(s) > 20000:
+        return []
+    try:
+        return cncode.decode_all(s)
+    except Exception:
+        return []
+
+
 def _t_jsfuck(s):
     """JSFuck：只有 []()!+ 六个字符"""
     if not cnenc or len(s) > 60000:
@@ -2232,7 +2254,7 @@ DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore,
        _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
        _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
-       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge]
+       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
 def _t_utf7(s):
@@ -3058,7 +3080,9 @@ def _analyze_uncached(text, max_depth=8):
             if not _res or len(_res) > 24 or _res == text:
                 continue
             if _nm.startswith(("猪圈", "NATO", "DNA", "元素周期表", "格雷码", "BCD",
-                              "博多码", "Deadfish", "keyCode", "Cisco", "Dvorak")):
+                              "博多码", "Deadfish", "keyCode", "Cisco", "Dvorak",
+                              "区位码", "GB2312", "干支", "卦名", "二进制->",
+                              "百家姓", "中文电码", "笔画码")):
                 notes.append(("★ %s → %s" % (_nm, _res), "短输出，排名低但识别度高"))
     except Exception:
         pass

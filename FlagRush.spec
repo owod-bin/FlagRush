@@ -29,6 +29,8 @@ CORE_MODULES = [
     "encmore",
     # 第三轮新增：pcapng 解析 / webshell 解密 / APK 与 .NET 逆向
     "pcapx", "webshell", "revx",
+    # 第四轮：中文编码（区位码/干支/六十四卦/百家姓/电码/笔画）
+    "cncode",
 ]
 
 datas = [

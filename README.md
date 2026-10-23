@@ -22,7 +22,8 @@
 |---|---|
 | Base 家族 | Base16(=Hex)、32、32hex、36、45、58、62、64、64URL、85、91、92、100 |
 | 其它编码 | URL、HTML 实体、Unicode 转义、Quoted-Printable、xxencode、uuencode、Punycode、**UTF-7**、JS 转义、**猪圈密码**、**NATO 音标**、**DNA 密码**、**元素周期表**、**博多码 Baudot**、**格雷码**、**BCD**、**Cisco Type7**、**keyCode**、**Deadfish**、**Dvorak 键盘**、**base64 大小写错乱**、**Base64 自定义编码表**、**ASCII 偏移**、Malbolge（识别）|
-| **古典密码** | 凯撒（25 位移）、仿射（312 组合）、**维吉尼亚（自动猜密钥）**、Atbash、ROT13/47/5、栅栏（2–12 栏）、**斯巴达棒**、**列换位**、培根、A1Z26（**含连写拆分**）、**希尔（矩阵）**、Playfair、Beaufort、Porta、Gronsfeld、Bifid、**四方密码（双密钥）**、**分数摩尔**、键盘左右移位、反转 |
+| **中文编码** | **GB2312 区位码**（十进制/十六进制互转）、**天干地支**（60 甲子，干支↔序号）、**伏羲六十四卦**（二进制↔卦名）、**百家姓**（486 姓，序号↔姓氏）、**中文电码**、**笔画码**（1横2竖3撇4点5折）|
+| **古典密码** | 凯撒（25 位移）、仿射（312 组合）、**维吉尼亚（自动猜密钥）**、Atbash、ROT13/47/5、栅栏（2–12 栏）、**斯巴达棒**、**列换位**、培根、A1Z26（**含连写拆分**）、**希尔（矩阵）**、Playfair、Beaufort、Porta、Gronsfeld、Bifid、**四方密码（双密钥）**、**分数摩尔**、**ADFGX**、**ADFGVX**、**Autokey 自动密钥**、**Nihilist 虚无者**、**Enigma M3**（转子 I/II/III + 反射板 B）、键盘左右移位、反转 |
 | **单表替换** | 任意替换表，用「词形匹配 + 英文四元组统计 + 模拟退火」求解（对标 quipqiup） |
 | 特殊语言 | 摩斯电码、二进制、八进制、十进制 ASCII、Brainfuck、Ook! |
 | **国内常见** | 零宽字符隐写、社会主义核心价值观编码、JSFuck（内置求值器）、**base64 填充位隐写**、当铺密码、手机键盘码、云影密码/01248、敲击码、盲文、Polybius 方阵 |
@@ -104,7 +105,8 @@ python build_package.py     # 打包成 dist/FlagRush/
 FlagRush/
 ├── core/                    # 引擎（44 个模块，约 27000 行）
 │   ├── crypto.py            # 编码/密码：A* 搜索、多检查器、crib
-│   ├── classic.py           # 古典密码库（含希尔、单表替换）
+│   ├── classic.py           # 古典密码库（含希尔、单表替换、Enigma、ADFGVX）
+│   ├── cncode.py            # 中文编码（区位码/干支/六十四卦/百家姓/电码/笔画）
 │   ├── quadgram.py          # 英文四元组统计表（单表替换求解用）
 │   ├── wordfreq.py          # 10000 常用词 + CTF 术语表
 │   ├── misc.py              # 综合面板总入口
@@ -139,7 +141,7 @@ python core/selftest_web.py        # 网页版（34）
 python core/fulltest.py            # 题库 + 一键路由（74）
 python core/battletest.py          # 实战八面板（61）
 python core/uitest.py              # 图形界面（46）
-python core/classic_ability_test.py # 古典密码能力（27）
+python core/classic_ability_test.py # 古典密码能力（60）
 python core/classic_e2e_test.py    # 端到端（10）
 python core/real_challenge_test.py # 真实赛题（7）
 python core/panel_smoke_test.py    # 九面板冒烟（14）

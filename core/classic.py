@@ -915,6 +915,367 @@ def aes_decode(text, key, mode="cbc", iv=None):
 
 # ---------------------------------------------------------------- 统一入口
 # 无密钥的，可以直接丢进自动解码流水线
+# ==================== ADFGX / ADFGVX ====================
+
+def _adfgx_square(key):
+    """5x5 Polybius 方阵（I/J 合并），返回 25 个字母的字符串"""
+    alpha = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+    k = re.sub(r"[^A-Z]", "", (key or "").upper()).replace("J", "I")
+    seen = ""
+    for c in k + alpha:
+        if c not in seen:
+            seen += c
+    return seen[:25]
+
+
+def _adfgvx_square(key):
+    """6x6 方阵（A-Z + 0-9），返回 36 个字符的字符串"""
+    alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    k = re.sub(r"[^A-Za-z0-9]", "", (key or "").upper())
+    seen = ""
+    for c in k + alpha:
+        if c not in seen:
+            seen += c
+    return seen[:36]
+
+
+def _col_order(key):
+    """列换位的列读取顺序：返回按 key 字母排序后的列下标"""
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not k:
+        return []
+    return [i for i, _ in sorted(enumerate(k), key=lambda kv: (kv[1], kv[0]))]
+
+
+def _col_transpose_enc(text, key):
+    """列换位加密：按 key 字母序读出各列"""
+    order = _col_order(key)
+    if not order:
+        return text
+    ncol = len(order)
+    nrow = (len(text) + ncol - 1) // ncol
+    grid = [text[i * ncol:(i + 1) * ncol] for i in range(nrow)]
+    # 补齐最后一列（最后一列可能短）
+    out = []
+    for c in order:
+        for r in range(nrow):
+            if c < len(grid[r]):
+                out.append(grid[r][c])
+    return "".join(out)
+
+
+def _col_transpose_dec(text, key):
+    """列换位解密：按 key 字母序把密文填回各列"""
+    order = _col_order(key)
+    if not order:
+        return text
+    ncol = len(order)
+    nrow = (len(text) + ncol - 1) // ncol
+    # 各列真实长度：前 (len%ncol) 列长 nrow，其余 nrow-1
+    lens = [nrow if i < len(text) % ncol else nrow - 1 for i in range(ncol)]
+    cols = {}
+    p = 0
+    for c in order:
+        cols[c] = text[p:p + lens[c]]
+        p += lens[c]
+    out = []
+    for r in range(nrow):
+        for c in range(ncol):
+            if r < len(cols.get(c, "")):
+                out.append(cols[c][r])
+    return "".join(out)
+
+
+def adfgx_decode(text, key):
+    if not key:
+        return []
+    sq = _adfgx_square(key)
+    coords = "ADFGX"
+    t = re.sub(r"[^A-Z]", "", text.upper())
+    if len(t) < 4 or len(t) % 2:
+        return []
+    # 1) 逆列换位
+    mid = _col_transpose_dec(t, key)
+    if len(mid) % 2:
+        return []
+    # 2) 坐标对 -> 字母
+    idx = {c: i for i, c in enumerate(coords)}
+    out = []
+    for i in range(0, len(mid), 2):
+        a, b = mid[i], mid[i + 1]
+        if a not in idx or b not in idx:
+            return []
+        out.append(sq[idx[a] * 5 + idx[b]])
+    return [("ADFGX（key=%s）" % key, "".join(out))]
+
+
+def adfgx_encode(text, key):
+    sq = _adfgx_square(key)
+    coords = "ADFGX"
+    t = re.sub(r"[^A-Z]", "", text.upper()).replace("J", "I")
+    if not t or not key:
+        return ""
+    mid = ""
+    for c in t:
+        i = sq.index(c)
+        mid += coords[i // 5] + coords[i % 5]
+    return _col_transpose_enc(mid, key)
+
+
+def adfgvx_decode(text, key):
+    if not key:
+        return []
+    sq = _adfgvx_square(key)
+    coords = "ADFGVX"
+    t = re.sub(r"[^A-Z]", "", text.upper())
+    if len(t) < 4 or len(t) % 2:
+        return []
+    mid = _col_transpose_dec(t, key)
+    idx = {c: i for i, c in enumerate(coords)}
+    out = []
+    for i in range(0, len(mid), 2):
+        a, b = mid[i], mid[i + 1]
+        if a not in idx or b not in idx:
+            return []
+        out.append(sq[idx[a] * 6 + idx[b]])
+    return [("ADFGVX（key=%s）" % key, "".join(out))]
+
+
+def adfgvx_encode(text, key):
+    sq = _adfgvx_square(key)
+    coords = "ADFGVX"
+    t = re.sub(r"[^A-Za-z0-9]", "", (text or "").upper())
+    if not t or not key:
+        return ""
+    mid = ""
+    for c in t:
+        i = sq.index(c)
+        mid += coords[i // 6] + coords[i % 6]
+    return _col_transpose_enc(mid, key)
+
+
+# ==================== Autokey 自动密钥 ====================
+
+def autokey_decode(text, key):
+    t = re.sub(r"[^A-Z]", "", text.upper())
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not t or not k:
+        return []
+    out = []
+    ks = k
+    for i, c in enumerate(t):
+        ki = ks[i] if i < len(ks) else "A"
+        p = chr((ord(c) - ord(ki)) % 26 + 65)
+        out.append(p)
+        ks += p          # 密钥流 = 密钥 + 明文
+    return [("Autokey（key=%s）" % key, "".join(out))]
+
+
+def autokey_encode(text, key):
+    t = re.sub(r"[^A-Z]", "", (text or "").upper())
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not t or not k:
+        return ""
+    out = []
+    ks = k
+    for i, c in enumerate(t):
+        ki = ks[i] if i < len(ks) else "A"
+        e = chr((ord(c) - 65 + ord(ki) - 65) % 26 + 65)
+        out.append(e)
+        ks += c          # 密钥流 = 密钥 + 明文
+    return "".join(out)
+
+
+# ==================== Nihilist 虚无者 ====================
+
+def _nihilist_square(key):
+    alpha = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+    k = re.sub(r"[^A-Z]", "", (key or "").upper()).replace("J", "I")
+    seen = ""
+    for c in k + alpha:
+        if c not in seen:
+            seen += c
+    return seen[:25]
+
+
+def _nihilist_split(digits, limit=200):
+    """把数字串切成 (c1,c2) 坐标对序列。
+
+    Nihilist 密文每个单元是两个坐标相加，坐标和范围 2~10，
+    写作时不定长（2-9 可能 1 位也可能 2 位，10 是 2 位），
+    所以必须回溯枚举所有合法切分。
+    """
+    res = []
+
+    def rec(i, acc):
+        if len(res) >= limit:
+            return
+        if i >= len(digits):
+            if acc:
+                res.append(list(acc))
+            return
+        for l1 in (1, 2):
+            if i + l1 > len(digits):
+                break
+            c1 = int(digits[i:i + l1])
+            if not (2 <= c1 <= 10):
+                continue
+            for l2 in (1, 2):
+                j = i + l1 + l2
+                if j > len(digits):
+                    break
+                c2 = int(digits[i + l1:j])
+                if not (2 <= c2 <= 10):
+                    continue
+                acc.append((c1, c2))
+                rec(j, acc)
+                acc.pop()
+
+    rec(0, [])
+    return res
+
+
+def nihilist_decode(text, key):
+    if not key:
+        return []
+    sq = _nihilist_square(key)
+    pos = {c: (i // 5 + 1, i % 5 + 1) for i, c in enumerate(sq)}
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not k:
+        return []
+    kcoords = [pos[c] for c in k if c in pos]
+    if not kcoords:
+        return []
+    raw = re.sub(r"[^0-9]+", " ", text).split()
+    if not raw:
+        return []
+    digits = "".join(raw)
+    if len(digits) < 4:
+        return []
+    out = []
+    seen_txt = set()
+    for pairs in _nihilist_split(digits, limit=40)[:8]:
+        txt = []
+        ok = True
+        for ki, (r, c) in enumerate(pairs):
+            kr, kc = kcoords[ki % len(kcoords)]
+            pr, pc = r - kr, c - kc
+            if not (1 <= pr <= 5 and 1 <= pc <= 5):
+                ok = False
+                break
+            txt.append(sq[(pr - 1) * 5 + (pc - 1)])
+        if not ok:
+            continue
+        t = "".join(txt)
+        if t not in seen_txt:
+            seen_txt.add(t)
+            out.append(("Nihilist（key=%s）" % key, t))
+    return out
+
+
+def nihilist_encode(text, key):
+    sq = _nihilist_square(key)
+    pos = {c: (i // 5 + 1, i % 5 + 1) for i, c in enumerate(sq)}
+    t = re.sub(r"[^A-Z]", "", (text or "").upper()).replace("J", "I")
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not t or not k:
+        return ""
+    kc = [pos[c] for c in k if c in pos]
+    out = []
+    for i, c in enumerate(t):
+        r, cc = pos[c]
+        kr, kcc = kc[i % len(kc)]
+        out.append("%d%d" % (r + kr, cc + kcc))
+    return "".join(out)
+
+
+# ==================== Enigma M3 ====================
+
+_ENIGMA_ROTORS = {
+    "I":   ("EKMFLGDQVZNTOWYHXUSPAIBRCJ", "Q"),
+    "II":  ("AJDKSIRUXBLHWTMCQGZNPYFVOE", "E"),
+    "III": ("BDFHJLCPRTXVZNYEIWGAKMUSQO", "V"),
+    "IV":  ("ESOVPZJAYQUIRHXLNFTGKDCMWB", "J"),
+    "V":   ("VZBRGITYUPSDNHLXAWMJQOFECK", "Z"),
+}
+_ENIGMA_REFLECTORS = {
+    "B": "YRUHQSLDPXNGOKMIEBFZCWVJAT",
+    "C": "FVPJIAOYEDRZXWGCTKUQSBNMHL",
+}
+
+
+def _enigma_run(text, order, pos, reflector="B"):
+    """标准 Enigma：order 为从左到右的转子名，pos 为 3 个初始位置字母"""
+    wiring = []
+    notches = []
+    for nm in order:
+        w, n = _ENIGMA_ROTORS[nm]
+        wiring.append(w)
+        notches.append(n)
+    ref = _ENIGMA_REFLECTORS.get(reflector, _ENIGMA_REFLECTORS["B"])
+    # 位置字母必须大写：小写时 ord('c')-65 = 35，超出 0~25，转子位置会算错
+    p = [ord(c) - 65 for c in pos.upper()]
+    out = []
+    for ch in text:
+        c = ch.upper()
+        if not ("A" <= c <= "Z"):
+            continue
+        # 步进：右转子先走，过 notch 时中间转子走（双步）
+        p[2] = (p[2] + 1) % 26
+        if chr(p[2] + 65) == notches[2]:
+            p[1] = (p[1] + 1) % 26
+            if chr(p[1] + 65) == notches[1]:
+                p[0] = (p[0] + 1) % 26
+        # 正向：右 -> 中 -> 左 -> 反射
+        x = ord(c) - 65
+        for i in (2, 1, 0):
+            x = (ord(wiring[i][(x + p[i]) % 26]) - 65 - p[i]) % 26
+        # 反射
+        x = ord(ref[x]) - 65
+        # 反向：左 -> 中 -> 右
+        for i in (0, 1, 2):
+            x = (wiring[i].index(chr((x + p[i]) % 26 + 65)) - p[i]) % 26
+        out.append(chr(x + 65))
+    return "".join(out)
+
+
+def enigma_decode(text, key):
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    t = re.sub(r"[^A-Za-z]", "", text)
+    if len(k) < 3 or len(t) < 4:
+        return []
+    order = ("I", "II", "III")
+    if len(k) >= 6:                      # 形如 IIIVII：前 3 是顺序，后 3 是位置
+        names = [k[0:3], k[3:6]]
+        try:
+            order = tuple(n if n in _ENIGMA_ROTORS else
+                          {"I": "I", "1": "I", "II": "II", "2": "II",
+                           "III": "III", "3": "III"}[n] for n in names)
+            pos = k[6:9]
+        except Exception:
+            return []
+    else:
+        pos = k[0:3]
+    try:
+        r = _enigma_run(t, order, pos)
+    except Exception:
+        return []
+    if not r:
+        return []
+    return [("Enigma M3（%s / %s）" % (" ".join(order), pos), r)]
+
+
+def enigma_encode(text, key):
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if len(k) < 3:
+        return ""
+    try:
+        return _enigma_run(re.sub(r"[^A-Za-z]", "", text),
+                           ("I", "II", "III"), k[0:3])
+    except Exception:
+        return ""
+
+
 KEYLESS = [
     ("Polybius", polybius_decode),
     ("敲击码", tapcode_decode),
@@ -939,6 +1300,11 @@ KEYED = [
     ("列换位", columnar_decode),
     ("分数摩尔", fractionated_morse_decode),
     ("四方密码", foursquare_decode),
+    ("ADFGVX", adfgvx_decode),
+    ("ADFGX", adfgx_decode),
+    ("Autokey", autokey_decode),
+    ("Nihilist", nihilist_decode),
+    ("Enigma", enigma_decode),
 ]
 
 

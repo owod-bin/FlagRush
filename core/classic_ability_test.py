@@ -217,6 +217,23 @@ add("Dvorak 键盘映射", "aoeuidhtns", ["uofladncvi"])
 add("手机键盘", "333 555 2 4", [])
 
 
+# ---------- 16. ADFGX / ADFGVX / Autokey / Nihilist / Enigma ----------
+add("ADFGX", "FGFFAGGXDAGGXXADGXGA\nkey=cipher", [])
+add("ADFGVX", "FGFFAGFVAVFDGGADFVDV\nkey=cipher", [])
+add("Autokey", "CYIXNFRSHN\nkey=queen", [])
+add("Nihilist", "463637582951052545554\nkey=russia", [])
+add("Enigma M3", "XGQPUOPHVMFZ\nkey=cat", [])
+
+
+# ---------- 17. 中文编码 ----------
+add("区位码", "5448463618664252", [])
+add("天干地支", "\u7532\u5b50\u4e59\u4e11\u4e19\u5bc5", [])
+add("六十四卦", "111111000000111000000111", [])
+add("百家姓", "\u8d75\u94b1\u5b59\u674e", [])
+add("中文电码", "0022 0947 0032", [])
+add("笔画码", "1121 121 251", [])
+
+
 def main():
     ok = 0
     rows = []
