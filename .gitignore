@@ -49,3 +49,6 @@ desktop.ini
 /_tree.json
 _corpus_*.txt
 _dl_*.txt
+
+# 临时调试脚本
+/_*.py
