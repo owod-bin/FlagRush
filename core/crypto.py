@@ -125,6 +125,13 @@ not no yes maybe perhaps certainly probably possibly
 """.split())
 
 
+# 词表里 >=4 字母的词，单独提出来做「子串匹配」用。
+# 用途：无空格连写（换位密码的典型输出）没法按词切分，但可以看整串里
+# **包含**多少个真词。这是区分正解和乱码变位词最可靠的信号 ——
+# 变位词的字母统计（四元组/二元组）和正解几乎一样，只有词级能分开。
+_WORDS4 = tuple(sorted({w for w in WORDS if len(w) >= 4}))
+
+
 # 「flag 主体」：Polybius / Playfair / 盲文 这类只能表示字母的密码，
 # 解出来是 FLAGXXXX 而没有大括号，要单独认
 FLAG_BODY_RE = re.compile(r"(?i)^(flag|ctf)[a-z0-9_]{4,48}$")
@@ -145,6 +152,13 @@ TRIGRAMS = ("the", "and", "ing", "ion", "tio", "ent", "ati", "for", "her", "ter"
             "hat", "tha", "ere", "ate", "his", "con", "res", "ver", "all", "ons",
             "nce", "men", "ith", "ted", "ers", "pro", "thi", "wit", "are", "ess",
             "sta", "tur", "cti", "com", "per", "oul", "und", "ain", "est", "ous")
+
+# 常用英文二元组（按频率取前 40）。用于判断「无空格连写」像不像英文 ——
+# 换位密码解出来就是这样，词表用不上，二元组覆盖率是少数还能用的信号。
+COMMON_BIGRAMS = ("th", "he", "in", "er", "an", "re", "on", "at", "en", "nd",
+                  "ti", "es", "or", "te", "of", "ed", "is", "it", "al", "ar",
+                  "st", "to", "nt", "ng", "se", "ha", "as", "ou", "io", "le",
+                  "ve", "co", "me", "de", "hi", "ri", "ro", "ic", "ne", "ea")
 
 # 标准英文单字母频率（百分比，来自大型语料统计）
 # 这是判断「是不是真英文」的正确判据：
@@ -188,7 +202,10 @@ def score(s):
         return -10.0
     sc = 0.0
     L = len(s)
-    if _cjk_ratio(s) > 0.35 and L >= 8:      # 太短的中文多半是解码乱码
+    # 中文占比高就认为是中文明文（UTF-7 / GB2312 / Unicode 解码常解出中文）。
+    # 门槛从 8 降到 4：UTF-7 的 "+Ti1lh21Li9U-" 解开只有 4 个汉字，
+    # 卡在 8 字门槛上导致中文解永远排在 ROT 变体后面。
+    if _cjk_ratio(s) > 0.35 and L >= 4:
         sc += 4.0
     printable = sum(1 for c in s if c.isprintable() or c in "\r\n\t")
     sc += printable / L * 2.0
@@ -209,11 +226,14 @@ def score(s):
             sc += 1.0
         # 长词（≥7 字母）不在词表 → 大概率是乱码
         # 英文长词的词表命中率很高，而乱码长词几乎必然落空
-        longw = [w for w in words if len(w) >= 7]
-        if longw:
-            lh = sum(1 for w in longw if w in WORDS)
-            if lh / len(longw) < 0.3:
-                sc -= 1.5
+        # 但「无空格连写」是换位密码（斯巴达棒/列换位/栅栏）的典型输出，
+        # 整串就是一个长词，这条惩罚会把正解压下去，所以只对有空格的文本生效
+        if spaces:
+            longw = [w for w in words if len(w) >= 7]
+            if longw:
+                lh = sum(1 for w in longw if w in WORDS)
+                if lh / len(longw) < 0.3:
+                    sc -= 1.5
     # 自然语言特征：用「与标准英文频率的余弦相似度」判断
     # （旧版用 IC，方向反了：重复字母多的乱码 IC 高，真英文反而低）
     letters_seq = [c.lower() for c in s if c.isalpha()]
@@ -244,12 +264,18 @@ def score(s):
     low = s.lower()
     has_struct = bool(re.search(r"[a-z0-9_]{2,24}\{[^}\n]{4,}\}", low))
     if has_struct:
-        sc += 6.0 if ("flag" in low or "ctf" in low) else 3.0
+        # 花括号内容太短（<6）时参考价值低 —— 实测换位密码会把输入里的
+        # "{uzps}" 原样搬下来，白送 3 分把正解挤掉
+        inner = re.search(r"\{([^}\n]{4,})\}", low)
+        sc += 6.0 if ("flag" in low or "ctf" in low) else (3.0 if (inner and len(inner.group(1)) >= 6) else 1.0)
     # 含 flag/ctf/key 等关键词（哪怕没有大括号）—— 栅栏/列移位解出的连写常是这种
     elif re.search(r"(flag|ctf|key|secret|pass)", low):
         # 只有「字母数字下划线为主」时才加分，避免乱码里碰巧含 ctf
         if sum(1 for c in s if c.isalnum() or c in "_ ") / max(L, 1) > 0.85:
-            sc += 1.8
+            # 无大括号时大幅降权：换位密码的变位词里「ctf」三个字母随机出现的
+            # 概率不低（实测 ctfgnfovclifefigvbosggg 这种垃圾就是靠这个刷分的）。
+            # 真 flag 主体要么带花括号，要么 _is_flag_body 那条已经给了 5 分。
+            sc += 1.8 if ("{" in s or " " in s) else 0.5
     # 没有大括号的 flag 主体（Polybius / Playfair / 盲文 解出来就是这样）
     if _is_flag_body(s):
         sc += 5.0
@@ -292,6 +318,24 @@ def score(s):
             sc += max(0.0, min(2.5, (q + 16.0) * 0.6))
         except Exception:
             pass
+        # 常用二元组覆盖率：换位密码（斯巴达棒/列换位/栅栏）解出来是「无空格连写」，
+        # 词表完全帮不上忙，但英文连写的二元组覆盖率远高于乱码。
+        # 实测 meetmeatthebridgeatnoon 能命中 12+ 个，乱码只有 2~3 个。
+        if len(s) >= 12:
+            low2 = s.lower()
+            bg = sum(1 for b in COMMON_BIGRAMS if b in low2)
+            sc += min(3.0, bg * 0.32)
+        # 词表子串命中：这是区分「换位密码的正解」和「乱码变位词」最可靠的信号。
+        # 变位词的字母统计（四元组/二元组）和正解几乎一样，只有词级能分开：
+        #   meetmeatthebridgeatnoon → meat / meet（2 个）
+        #   motoaneigrdbtethateemen → that（1 个，且这是两步链刷出来的）
+        if len(s) >= 10:
+            low3 = s.lower()
+            wh = sum(1 for w in _WORDS4 if w in low3)
+            # 权重给到 3.5：619 个四字母以上词，随机串命中的期望只有 0.03 个，
+            # 而英文连写能命中好几个。这是无空格文本最可信的信号，必须压过
+            # 二元组/三元组（变位词在这些统计上和正解几乎一样，甚至会更高）。
+            sc += min(7.0, wh * 3.5)
     return sc
 
 
@@ -1802,8 +1846,49 @@ DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
+def _t_utf7(s):
+    """UTF-7 解码（Python 的 utf-7 编解码器只接受 bytes，要先 encode）"""
+    t = s.strip()
+    if len(t) < 3 or "\n" in t:
+        return []
+    try:
+        r = codecs.decode(t.encode("ascii", "ignore"), "utf-7")
+        if r != s and r:
+            return [("UTF-7", r)]
+    except Exception:
+        pass
+    return []
+
+
+def _t_scytale(s):
+    """斯巴达棒：按 cols 宽逐行写、按列读出。爆破 cols"""
+    if len(s) > 100000 or not re.fullmatch(r"[\x20-\x7e\r\n]*", s):
+        return []
+    out = []
+    for n in range(2, min(16, len(s))):
+        r = classic.scytale_dec(s, n) if classic else None
+        if r and r != s:
+            out.append((f"斯巴达棒-{n}栏", r))
+    return out
+
+
+def _t_columnar(s):
+    """列换位（无密钥时用恒等列序，等价于斯巴达棒的另一种读法）"""
+    if len(s) > 100000 or not re.fullmatch(r"[\x20-\x7e\r\n]*", s):
+        return []
+    if not classic:
+        return []
+    out = []
+    for n in range(2, min(16, len(s))):
+        r = classic.scytale_dec(s, n)
+        if r and r != s:
+            out.append((f"列换位-{n}列", r))
+    return out
+
+
 AMB = [_t_rail, _t_caesar, _t_a1z26_nosep, _t_affine, _t_keyboard,
-       _t_reverse, _t_atbash, _t_rot, _t_xor1]
+       _t_reverse, _t_atbash, _t_rot, _t_xor1,
+       _t_scytale, _t_columnar, _t_utf7]
 
 # 全部变换（expand() 用；之前漏了这行定义，一调用就 NameError）
 TRANSFORMS = DET + AMB
@@ -2130,7 +2215,9 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
     _seq = [0]
 
     def _pri(sc, depth):
-        return sc - 0.8 * depth + (0.4 if depth <= 1 else 0.0)
+        # 层数惩罚 0.8→1.3：换位类变换（斯巴达棒/列换位/栅栏）套两层还是变位词，
+        # 统计特征和正解接近，靠多层能刷出更高分。压狠一点让单步解优先。
+        return sc - 1.3 * depth + (0.6 if depth <= 1 else 0.0)
 
     def _push(txt, desc, depth, sc):
         _hq.heappush(_heap, (-_pri(sc, depth), _seq[0], txt, desc, depth))

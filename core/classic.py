@@ -395,6 +395,51 @@ def hill_decode(text, key=""):
     return out
 
 
+def _fm_key(key):
+    """分数摩尔的 key：26 个不重复字母的密钥字母表"""
+    a = "".join(c for c in (key or "").upper() if c.isalpha())
+    if len(a) == 26 and len(set(a)) == 26:
+        return a
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ"   # 没给就用标准字母表
+
+
+def columnar_decode(text, key=""):
+    """列换位：key 决定列的读取顺序"""
+    r = columnar_dec(text, key)
+    if not r:
+        return []
+    return [("列换位（key=%s）" % key, r)]
+
+
+def fractionated_morse_decode(text, key=""):
+    a = _fm_key(key)
+    r = fractionated_morse_dec(text, a)
+    if not r:
+        return []
+    return [("分数摩尔" + ("" if a == "ABCDEFGHIJKLMNOPQRSTUVWXYZ" else "（密钥字母表）"), r)]
+
+
+def _fs_keys(key):
+    """四方密码要两个密钥：key=K1,K2 或 key=K1 K2"""
+    t = (key or "").replace(",", " ").split()
+    t = [x for x in t if x]
+    if len(t) >= 2:
+        return t[0], t[1]
+    if len(t) == 1:
+        return t[0], "EXAMPLE"
+    return None, None
+
+
+def foursquare_decode(text, key=""):
+    k1, k2 = _fs_keys(key)
+    if not k1:
+        return []
+    r = foursquare_dec(text, k1, k2)
+    if not r:
+        return []
+    return [("四方密码（%s/%s）" % (k1, k2), r)]
+
+
 def bifid_decode(text, key=""):
     """两行写法：先按行读出坐标，再按列还原"""
     sq = _poly_square(key)
@@ -891,6 +936,9 @@ KEYED = [
     ("Porta", porta_decode),
     ("Bifid", bifid_decode),
     ("希尔", hill_decode),
+    ("列换位", columnar_decode),
+    ("分数摩尔", fractionated_morse_decode),
+    ("四方密码", foursquare_decode),
 ]
 
 
@@ -944,3 +992,268 @@ def identify(text):
     if re.fullmatch(r"[A-Za-z]{2,}", t) and len(t) % 2 == 0:
         res.append(("可能是 Playfair / Bifid", "需要密钥：在输入框第二行写 key=你的密钥"))
     return res
+
+
+# ============================================================
+# 斯巴达棒 Scytale / 列换位 Columnar Transposition
+# ============================================================
+def scytale_dec(s, cols):
+    """斯巴达棒解密
+
+    加密：明文按 cols 宽逐行写进格子，再按列从上到下读出 → 密文
+    解密：把密文按列高切回各列，再按行读出
+    """
+    L = len(s)
+    if cols < 2 or cols >= L:
+        return None
+    rows = (L + cols - 1) // cols
+    rem = L % cols
+    # 只有前 rem 列是满的（加密时最后一行是 partial）
+    col_len = [rows if c < rem else rows - 1 for c in range(cols)]
+    if min(col_len) <= 0:
+        return None
+    parts, idx = [], 0
+    for c in range(cols):
+        parts.append(s[idx: idx + col_len[c]])
+        idx += col_len[c]
+    if idx != L:
+        return None
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            if r < len(parts[c]):
+                out.append(parts[c][r])
+    return "".join(out)
+
+
+def scytale_enc(s, cols):
+    """斯巴达棒加密（自测用）"""
+    L = len(s)
+    if cols < 2 or cols >= L:
+        return None
+    rows = (L + cols - 1) // cols
+    out = []
+    for c in range(cols):
+        for r in range(rows):
+            i = r * cols + c
+            if i < L:
+                out.append(s[i])
+    return "".join(out)
+
+
+def _key_order(key):
+    """密钥字母的 alphabetical 排名，决定列的读取顺序"""
+    k = [c.upper() for c in key if c.isalpha()]
+    if not k:
+        return None
+    return [i for i, _ in sorted(enumerate(k), key=lambda t: (t[1], t[0]))]
+
+
+def columnar_dec(s, key):
+    """列换位解密：密钥决定列的读取顺序"""
+    order = _key_order(key)
+    if not order:
+        return None
+    n = len(order)
+    L = len(s)
+    if n < 2 or n >= L:
+        return None
+    rows = (L + n - 1) // n
+    rem = L % n
+    # 加密时按 order 的顺序读列；第 j 个被读的列长度如下
+    read_len = []
+    for j in range(n):
+        c = order[j]
+        read_len.append(rows if c < rem else rows - 1)
+    if min(read_len) <= 0:
+        return None
+    cols_data = [None] * n
+    idx = 0
+    for j in range(n):
+        cols_data[order[j]] = s[idx: idx + read_len[j]]
+        idx += read_len[j]
+    if idx != L:
+        return None
+    out = []
+    for r in range(rows):
+        for c in range(n):
+            if r < len(cols_data[c]):
+                out.append(cols_data[c][r])
+    return "".join(out)
+
+
+def columnar_enc(s, key):
+    """列换位加密（自测用）"""
+    order = _key_order(key)
+    if not order:
+        return None
+    n = len(order)
+    L = len(s)
+    if n < 2 or n >= L:
+        return None
+    rows = (L + n - 1) // n
+    out = []
+    for c in order:
+        for r in range(rows):
+            i = r * n + c
+            if i < L:
+                out.append(s[i])
+    return "".join(out)
+
+
+# ============================================================
+# 分数摩尔 Fractionated Morse
+# ============================================================
+MORSE = {
+    "A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.",
+    "G": "--.", "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..",
+    "M": "--", "N": "-.", "O": "---", "P": ".--.", "Q": "--.-", "R": ".-.",
+    "S": "...", "T": "-", "U": "..-", "V": "...-", "W": ".--", "X": "-..-",
+    "Y": "-.--", "Z": "--..",
+}
+MORSE_REV = {v: k for k, v in MORSE.items()}
+
+# 26 个三元组（只含 . - x）按固定顺序对应密钥字母表
+# {.,-,x} 三维组合共 27 个，标准分数摩尔表去掉全 x 的那个，剩 26 个
+FM_TRIGRAMS = [
+    "...", "..-", "..x", ".-.", ".--", ".-x", ".x.", ".x-", ".xx",
+    "-..", "-.-", "-.x", "--.", "---", "--x", "-x.", "-x-", "-xx",
+    "x..", "x.-", "x.x", "x-.", "x--", "x-x", "xx.", "xx-",
+]
+
+
+def fractionated_morse_dec(s, alphabet):
+    """分数摩尔解密
+
+    alphabet 是 26 个字母的密钥字母表（题目会给），
+    决定每个三元组对应哪个明文字母。
+    """
+    a = "".join(c for c in (alphabet or "").upper() if c.isalpha())
+    if len(a) != 26 or len(set(a)) != 26:
+        return None
+    tri2chr = {t: a[i] for i, t in enumerate(FM_TRIGRAMS)}
+    t = re.sub(r"[^A-Za-z]", "", s or "").upper()
+    if len(t) < 3:
+        return None
+    # 密文里每个字母要还原成三元组
+    bits = []
+    for ch in t:
+        tri = None
+        for k, v in tri2chr.items():
+            if v == ch:
+                tri = k
+                break
+        if tri is None:
+            return None
+        bits.append(tri)
+    stream = "".join(bits)
+    # 去掉末尾补位的 x，再按 x 拆回字母
+    stream = stream.rstrip("x")
+    parts = [p for p in stream.split("x") if p]
+    out = []
+    for p in parts:
+        if p in MORSE_REV:
+            out.append(MORSE_REV[p])
+        elif p == "":
+            continue
+        else:
+            return None
+    return "".join(out)
+
+
+def fractionated_morse_enc(s, alphabet):
+    """分数摩尔加密（自测用）"""
+    a = "".join(c for c in (alphabet or "").upper() if c.isalpha())
+    if len(a) != 26 or len(set(a)) != 26:
+        return None
+    chr2tri = {a[i]: FM_TRIGRAMS[i] for i in range(26)}
+    t = re.sub(r"[^A-Za-z]", "", s or "").upper()
+    if not t:
+        return None
+    stream = []
+    for ch in t:
+        if ch not in MORSE:
+            return None
+        stream.append(MORSE[ch])
+    stream = "x".join(stream)
+    while len(stream) % 3:
+        stream += "x"
+    out = []
+    for i in range(0, len(stream), 3):
+        tri = stream[i:i + 3]
+        if tri not in chr2tri.values():
+            return None
+        for k, v in chr2tri.items():
+            if v == tri:
+                out.append(k)
+                break
+    return "".join(out)
+
+
+# ============================================================
+# 四方密码 Foursquare
+# ============================================================
+def _fs_square(key):
+    """由密钥生成 5x5 方阵（I/J 合并）"""
+    k = "".join(c for c in (key or "").upper() if c.isalpha()).replace("J", "I")
+    seen, sq = set(), []
+    for c in k + "ABCDEFGHIKLMNOPQRSTUVWXYZ":
+        if c not in seen:
+            seen.add(c)
+            sq.append(c)
+    return sq[:25]
+
+
+def foursquare_dec(s, k1, k2):
+    """四方密码解密
+
+    布局：
+      [k1方阵] [标准方阵]
+      [标准方阵] [k2方阵]
+    右上用标准方阵，左下用标准方阵，左上 k1，右下 k2。
+    """
+    t = re.sub(r"[^A-Za-z]", "", s or "").upper().replace("J", "I")
+    if len(t) < 2 or len(t) % 2:
+        return None
+    s1, s2 = _fs_square(k1), _fs_square(k2)
+    std = _fs_square("")
+    if len(s1) != 25 or len(s2) != 25:
+        return None
+
+    def pos(sq, ch):
+        i = sq.index(ch)
+        return i // 5, i % 5
+
+    out = []
+    for i in range(0, len(t), 2):
+        a, b = t[i], t[i + 1]
+        ra, ca = pos(s1, a)      # 左上：k1
+        rb, cb = pos(s2, b)      # 右下：k2
+        # 明文在右上（标准）和左下（标准）：右上[r1][c2]、左下[r2][c1]
+        out.append(std[ra * 5 + cb])
+        out.append(std[rb * 5 + ca])
+    return "".join(out)
+
+
+def foursquare_enc(s, k1, k2):
+    """四方密码加密（自测用）"""
+    t = re.sub(r"[^A-Za-z]", "", s or "").upper().replace("J", "I")
+    if len(t) < 2 or len(t) % 2:
+        return None
+    s1, s2 = _fs_square(k1), _fs_square(k2)
+    std = _fs_square("")
+    if len(s1) != 25 or len(s2) != 25:
+        return None
+
+    def pos(sq, ch):
+        i = sq.index(ch)
+        return i // 5, i % 5
+
+    out = []
+    for i in range(0, len(t), 2):
+        a, b = t[i], t[i + 1]
+        ra, ca = pos(std, a)     # 右上：标准
+        rb, cb = pos(std, b)     # 左下：标准
+        out.append(s1[ra * 5 + cb])
+        out.append(s2[rb * 5 + ca])
+    return "".join(out)

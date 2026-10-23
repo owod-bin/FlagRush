@@ -173,6 +173,29 @@ for _ch in "flag{b64stego_ok}":
     _lines.append("A" + _B64A[_v & 0x0F] + "==")
 add("base64 隐写（填充位）", chr(10).join(_lines), ["b64stego_ok"])
 
+# ---------- 14e. 随波逐流对标补缺：斯巴达棒/列换位/分数摩尔/四方密码/UTF-7 ----------
+import classic as _cl
+
+_pt = "meetmeatthebridgeatnoon"
+for _n in (3, 5, 7):
+    add("斯巴达棒-%d栏" % _n, _cl.scytale_enc(_pt, _n), ["meetmeatthebridgeatnoon"])
+
+for _k in ("crypto", "secret"):
+    add("列换位 key=%s" % _k,
+        _cl.columnar_enc(_pt, _k) + chr(10) + "key=" + _k,
+        ["meetmeatthebridgeatnoon"])
+
+_alpha = "CIPHERABDFGJKMOQSUVWXYZLNT"
+add("分数摩尔（密钥字母表）",
+    _cl.fractionated_morse_enc("flagfm", _alpha) + chr(10) + "key=" + _alpha,
+    ["flagfm"])
+
+add("四方密码（双密钥）",
+    _cl.foursquare_enc("meetmeatthebridgex", "CIPHER", "SECRET") + chr(10) + "key=CIPHER,SECRET",
+    ["meetmeatthebridgex"])
+
+add("UTF-7", "+Ti1lh21Li9U-", ["中文测试"])
+
 # ---------- 15. 手机键盘 ----------
 add("手机键盘", "333 555 2 4", [])
 
