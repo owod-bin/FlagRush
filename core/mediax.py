@@ -226,6 +226,127 @@ MORSE = {
 }
 
 
+# ------------------------------------------------------------------ DTMF 双音多频
+# CTF 音频题常客：给一段 wav，里面是电话拨号音，解出来就是 flag 的数字部分。
+# 用 Goertzel 算法算 8 个标准 DTMF 频率的能量，每帧取最强行频+列频。
+DTMF_LOW = (697, 770, 852, 941)          # 行频
+DTMF_HIGH = (1209, 1336, 1477, 1637)     # 列频
+DTMF_KEYS = (
+    ("1", "2", "3", "A"),
+    ("4", "5", "6", "B"),
+    ("7", "8", "9", "C"),
+    ("*", "0", "#", "D"),
+)
+
+
+def _goertzel(samples, rate, freq):
+    """Goertzel 算法：算某个频率在 samples 里的能量。
+
+    注意 w 直接用请求频率算（不取整到 k = n*freq/rate）：
+    20ms 帧在 8kHz 下只有 50Hz 分辨率，而 DTMF 频率间隔只有 ~70Hz，
+    取整后 1209Hz 会被量化到 1250Hz，列频全部分不开（实测全解成 1477）。
+    """
+    import math
+    n = len(samples)
+    if n == 0:
+        return 0.0
+    w = 2.0 * math.pi * freq / rate
+    coeff = 2.0 * math.cos(w)
+    s_prev = s_prev2 = 0.0
+    for x in samples:
+        s = x + coeff * s_prev - s_prev2
+        s_prev2 = s_prev
+        s_prev = s
+    return s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2
+
+
+def dtmf_decode(samples, rate, frame_ms=40, step_ms=10, thresh_ratio=2.0):
+    """从采样数据里解 DTMF。
+
+    samples: 单声道 float/int 序列（-1.0 ~ 1.0 或 16 位整数都行）
+    rate:    采样率
+    返回 (解码出的字符串, 每帧明细)
+
+    分段逻辑：**用静音帧作为数字边界**。不能简单地「相邻帧去重」——
+    那样 '911' 会被合成 '91'（连续两个相同数字分不开）。正确做法是
+    每个持续音在遇到静音时提交一次。
+    """
+    if not samples or rate <= 0:
+        return "", []
+    frame = max(1, int(rate * frame_ms / 1000))
+    step = max(1, int(rate * step_ms / 1000))
+    out = []
+    detail = []
+    cur = None
+    i = 0
+    while i + frame <= len(samples):
+        seg = samples[i:i + frame]
+        avg = sum(seg) / len(seg)
+        seg = [x - avg for x in seg]
+        lo = [_goertzel(seg, rate, f) for f in DTMF_LOW]
+        hi = [_goertzel(seg, rate, f) for f in DTMF_HIGH]
+        ri = max(range(4), key=lambda k: lo[k])
+        ci = max(range(4), key=lambda k: hi[k])
+        tot = sum(lo) + sum(hi) + 1e-12
+        strong = (lo[ri] + hi[ci]) / tot
+        hit = (strong > 0.35
+               and lo[ri] > thresh_ratio * (sum(lo) / 4 + 1e-12)
+               and hi[ci] > thresh_ratio * (sum(hi) / 4 + 1e-12))
+        if hit:
+            key = DTMF_KEYS[ri][ci]
+            detail.append((i / rate, key))
+            if cur is None:
+                cur = key
+            elif key != cur:
+                # 音变了：前一个音结束
+                out.append(cur)
+                cur = key
+        else:
+            # 静音帧：当前音结束
+            if cur is not None:
+                out.append(cur)
+                cur = None
+        i += step
+    if cur is not None:
+        out.append(cur)
+    return "".join(out), detail
+
+
+def dtmf_from_wav(path):
+    """读 wav 文件解 DTMF，返回 (字符串, 说明)"""
+    try:
+        import wave
+        import array
+        w = wave.open(path, "rb")
+    except Exception as e:
+        return "", f"打不开 wav：{e}"
+    try:
+        nch = w.getnchannels()
+        sw = w.getsampwidth()
+        rate = w.getframerate()
+        n = w.getnframes()
+        raw = w.readframes(n)
+    finally:
+        w.close()
+    if sw == 2:
+        a = array.array("h")
+        a.frombytes(raw[:len(raw) // 2 * 2])
+        if __import__("sys").byteorder == "big":
+            a.byteswap()
+        samples = a.tolist()
+    elif sw == 1:
+        samples = [b - 128 for b in raw]
+    else:
+        samples = [int.from_bytes(raw[i:i + sw], "little", signed=True)
+                   for i in range(0, len(raw) - sw + 1, sw)]
+    if nch > 1:
+        samples = samples[::nch]
+    mx = max((abs(x) for x in samples), default=1) or 1
+    samples = [x / mx for x in samples]
+    txt, detail = dtmf_decode(samples, rate)
+    return txt, "%d 帧采样，%d 个有效音" % (len(samples), len(detail))
+
+
 def morse_to_text(morse):
     """把 ".... . .-.. .-.. ---" 这种转成文本；也接受 / 分词"""
     if not morse:

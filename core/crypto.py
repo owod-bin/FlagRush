@@ -2340,13 +2340,46 @@ def _t_compress(s):
     return out
 
 
+def _t_des(s):
+    """DES / 3DES 解密：输入是 hex 密文，且题目给了 key= 时尝试。
+
+    DES 是 64 位分组，密文长度必须是 8 的倍数；
+    纯 Python 实现见 core/desc.py（已用三个标准测试向量校验）。
+    """
+    if not _CURRENT_KEY:
+        return []
+    t = re.sub(r"[^0-9A-Fa-f]", "", s)
+    if len(t) < 16 or len(t) % 16:
+        return []
+    try:
+        import desc as _desc
+    except Exception:
+        return []
+    out = []
+    for mode in ("des", "3des"):
+        try:
+            r = _desc.des_solve(t, _CURRENT_KEY, mode=mode)
+        except Exception:
+            continue
+        if not r.get("ok"):
+            continue
+        txt = r.get("plain_text") or ""
+        if not txt or len(txt) < 4:
+            continue
+        good = sum(1 for c in txt if 32 <= ord(c) < 127) / len(txt)
+        if good > 0.7:
+            out.append(("%s 解密" % mode.upper(), txt))
+    return out
+
+
 DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_url, _t_b16, _t_b64, _t_b32, _t_b85, _t_b58, _t_b62, _t_b36, _t_b45, _t_b91,
        _t_uu, _t_unicode, _t_html, _t_qp, _t_morse, _t_binary, _t_octal, _t_dec,
        _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore,
        _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
        _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
-       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode, _t_compress]
+       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode, _t_compress,
+       _t_des]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
 def _t_utf7(s):
@@ -2582,8 +2615,10 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
         if not text:
             return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0}
 
-    # 纯哈希：单向函数，硬解只会输出一堆乱码，直接交给哈希模式处理
-    if is_hash(text) and "\n" not in text:
+    # 纯哈希：单向函数，硬解只会输出一堆乱码，直接交给哈希模式处理。
+    # 但给了 key 就不能按哈希处理 —— 32 位 hex 既是合法 MD5、也是两个 DES 块，
+    # 用户明确给了密钥说明这是加密题，走解密才有意义。
+    if is_hash(text) and "\n" not in text and not _CURRENT_KEY:
         return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0,
                 "hash_only": text.strip()}
 

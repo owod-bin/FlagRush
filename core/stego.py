@@ -7,6 +7,7 @@ GIF 帧拆分（纯 Python LZW 解码，不用装 Pillow）+ 位平面 / 单通�
 """
 import os
 import io
+import re
 import math
 import zlib
 import struct
@@ -492,6 +493,97 @@ def zip_secrets(data):
                 out.append(("ZIP 文件 %r 压缩数据后的附加字节（%d 字节）" % (name[:40], len(tail)), tail))
         pos = j + 4
     return out
+
+
+# ------------------------------------------------------------------ 01 串转位图
+def bits_to_image(bits, width=None, height=None, scale=8, invert=False,
+                  out_path=None):
+    """把 01 串渲染成位图 PNG（黑/白两点）。
+
+    CTF misc 高频题：给一长串 01，转成图就是二维码 / 文字 / 条码。
+    width/height 不给时自动猜：优先正方形，其次常见比例（32x32、64x64…）。
+    scale 是每比特的像素边长。
+    """
+    t = re.sub(r"[^01]", "", bits or "")
+    n = len(t)
+    if n < 16:
+        return False, [], "01 串太短"
+    # 自动猜尺寸
+    if width is None and height is None:
+        r = int(round(n ** 0.5))
+        if r * r == n:
+            width = height = r
+        else:
+            cands = []
+            for w in range(8, min(n // 8, 512) + 1):
+                if n % w == 0:
+                    h = n // w
+                    if h >= 4:
+                        # 偏好接近正方形、且宽高都是 8 的倍数（二维码/条码常见）
+                        cands.append((abs(w - h) + (0 if w % 8 == 0 and h % 8 == 0 else 50), w, h))
+            if cands:
+                cands.sort()
+                width, height = cands[0][1], cands[0][2]
+            else:
+                width = min(n, 256)
+                height = (n + width - 1) // width
+    elif width is None:
+        width = (n + height - 1) // height
+    elif height is None:
+        height = (n + width - 1) // width
+    if width * height < n:
+        height = (n + width - 1) // width
+    rows = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            i = y * width + x
+            bit = int(t[i]) if i < n else 0
+            if invert:
+                bit = 1 - bit
+            v = 255 if bit else 0
+            row += bytes([v, v, v]) * scale
+        rows.append(bytes(row))
+    if out_path is None:
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "_bits.png")
+    out_path = os.path.abspath(out_path)
+    write_png(out_path, width * scale, height * scale, rows)
+    return True, [out_path], "%dx%d（放大 %d 倍 -> %dx%d 像素）" % (
+        width, height, scale, width * scale, height * scale)
+
+
+def bits_to_image_variants(bits, outdir=None):
+    """一把梭：多种尺寸/反色组合都渲染一遍，方便直接看。
+
+    返回 (成功?, 文件列表, 说明)
+    """
+    t = re.sub(r"[^01]", "", bits or "")
+    n = len(t)
+    if n < 16:
+        return False, [], "01 串太短"
+    outdir = outdir or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "_bits_out")
+    os.makedirs(outdir, exist_ok=True)
+    files = []
+    descs = []
+    # 1) 自动尺寸（正色 + 反色）
+    for inv in (False, True):
+        ok, fs, desc = bits_to_image(t, invert=inv,
+                                     out_path=os.path.join(outdir, "auto_%s.png" % ("inv" if inv else "norm")))
+        if ok:
+            files += fs
+            descs.append("%s%s" % ("反色 " if inv else "", desc))
+    # 2) 常见固定尺寸（只在这些尺寸能整除时试）
+    for w in (8, 16, 21, 25, 32, 33, 40, 48, 64, 100, 128):
+        if n % w == 0 and n // w >= 4:
+            h = n // w
+            ok, fs, desc = bits_to_image(t, width=w, height=h,
+                                         out_path=os.path.join(outdir, "w%d_h%d.png" % (w, h)))
+            if ok:
+                files.append(fs[0])
+                descs.append("%dx%d" % (w, h))
+    return True, files, "生成 %d 张：%s" % (len(files), "、".join(descs[:8]))
 
 
 # ------------------------------------------------------------------ 位平面

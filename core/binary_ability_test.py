@@ -2,7 +2,7 @@
 """新模块专项测试：binx / hexq / filemerge / stego(增强) / rev(Go/ELF)"""
 import sys, os, struct, gzip, zlib, base64, zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/core")
-import binx, hexq, filemerge, stego as S, rev
+import binx, hexq, filemerge, stego as S, rev, mediax as M, classic as C, desc as D
 
 ok = tot = 0
 def chk(name, cond, extra=""):
@@ -112,6 +112,79 @@ fake = fake.ljust(64, b"\x00")
 chk("elf_info 入口点", any("0x401000" in l for l in rev.elf_info(fake)))
 chk("go_strings 可调用", isinstance(rev.go_strings(b"abc\x00defg\x00hij"), list))
 chk("_split_glued 切分", rev._split_glued("flag{xxx}secretkeypassword", 3) is not None)
+
+print()
+print("=== DTMF 拨号音 ===")
+import math
+_rate = 8000
+def _tone(freqs, ms):
+    _n = int(_rate * ms / 1000)
+    return [sum(math.sin(2 * math.pi * f * i / _rate) for f in freqs) / len(freqs)
+            for i in range(_n)]
+def _sil(ms):
+    return [0.0] * int(_rate * ms / 1000)
+_rows = [697, 770, 852, 941]
+_cols = [1209, 1336, 1477, 1637]
+_pad = "123A456B789C*0#D"
+_keys = {d: (_rows[i // 4], _cols[i % 4]) for i, d in enumerate(_pad)}
+for _test in ("123", "911", "*0#D", "ABC", "111", "9999", "1A2B3C4D"):
+    _seq = []
+    for _d in _test:
+        _r, _c = _keys[_d]
+        _seq += _tone([_r, _c], 80) + _sil(50)
+    _txt, _det = M.dtmf_decode(_seq, _rate)
+    chk("DTMF %s" % _test, _txt == _test, "得到 %r" % _txt)
+
+print()
+print("=== 01 串转位图 ===")
+import shutil as _sh
+_bits = "".join("1" if (x // 5 + y // 5) % 2 else "0" for y in range(21) for x in range(21))
+_ok, _fs, _desc = S.bits_to_image_variants(_bits, outdir="_bt")
+chk("位图 variants 生成", _ok and len(_fs) >= 3, _desc[:40])
+_ok2, _f2, _d2 = S.bits_to_image(_bits, width=21, height=21, out_path="_bt/a.png")
+import struct as _st
+_hdr = open(_f2[0], "rb").read(24)
+_w, _h = _st.unpack(">II", _hdr[16:24])
+chk("位图 21x21 像素正确", (_w, _h) == (21 * 8, 21 * 8), "得到 %dx%d" % (_w, _h))
+chk("位图自动尺寸识别正方形", "21x21" in _d2, _d2)
+_sh.rmtree("_bt", ignore_errors=True)
+
+print()
+print("=== DES / 3DES（标准测试向量）===")
+_DK = bytes.fromhex("133457799BBCDFF1")
+_vec = [
+    (bytes(8), bytes(8), "8CA64DE9C1B123A7"),
+    (b"\xff" * 8, b"\xff" * 8, "7359B2163E4EDC58"),
+    (bytes.fromhex("133457799BBCDFF1"), bytes.fromhex("0123456789ABCDEF"),
+     "85E813540F0AB405"),
+]
+for _k, _p, _want in _vec:
+    _got = D.des_encrypt(_p, _k)
+    chk("DES 向量 key=%s" % _k.hex()[:8], _got.hex().upper() == _want,
+        "得到 %s 期望 %s" % (_got.hex().upper(), _want))
+_d = b"flag{des_roundtrip}"
+# 注意补零：20 字节明文会被补到 24 字节，往返结果要 rstrip 后再比
+chk("3DES 往返", D.triples_des_decrypt(D.triples_des_encrypt(_d, _DK), _DK).rstrip(b"\x00") == _d)
+chk("DES 补零不截断", D.des_decrypt(D.des_encrypt(b"flag{pad21bytes!!}", _DK), _DK)
+    .startswith(b"flag{pad21bytes!!}"))
+
+print()
+print("=== 行置换 / Enigma 完整版 ===")
+_bad = 0
+for _k in ("crypto", "key", "secret", "a", "ab"):
+    for _L in (10, 23, 24, 25, 30, 37):
+        _pt = (b"attacktheeastwallatdawn" * 3).decode()[:_L]
+        _ct = C.row_transposition_enc(_pt, _k)
+        _bk = C.row_transposition_dec(_ct, _k)
+        if not (_bk and _bk[0][1] == _pt.upper()):
+            _bad += 1
+chk("行置换 30 组往返", _bad == 0, "%d 组失败" % _bad)
+_ct = C._enigma_run_full("ATTACKATDAWN", ("I", "II", "III"), "CAT", "B",
+                         {"A": "B", "B": "A"}, "AAA")
+chk("Enigma 插线板往返", C.enigma_decode_full(_ct, "CAT", plugboard="AB")[0][1] == "ATTACKATDAWN")
+_ct2 = C._enigma_run_full("ATTACKATDAWN", ("I", "II", "III"), "CAT", "B", None, "BBC")
+chk("Enigma 环设置往返", C.enigma_decode_full(_ct2, "CAT", rings="BBC")[0][1] == "ATTACKATDAWN")
+
 
 print()
 print("=" * 60)

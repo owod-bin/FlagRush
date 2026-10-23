@@ -1289,6 +1289,150 @@ KEYLESS = [
 ]
 
 # 有密钥的，需要题目给 key
+# ==================== 行置换 Row Transposition ====================
+# 和列换位的区别：列换位是「按行写、按密钥序读**列**」；
+# 行置换是「按行写、按密钥序重排**行**、再按行读」。
+# 两者的密钥用法不同，解出来也不同，CTF 里都会出现。
+
+def _row_order(key, nrow):
+    """行置换的行序：每行按「密钥循环取模」分配一个排序键。
+
+    注意这和列换位的 _col_order 完全不同：列换位的列数恰好等于密钥长度，
+    一个字母对一列；行置换的行数通常远大于密钥长度，要循环使用密钥。
+    """
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not k:
+        return list(range(nrow))
+    return sorted(range(nrow), key=lambda r: (k[r % len(k)], r))
+
+
+def row_transposition_enc(s, key):
+    t = re.sub(r"[^A-Z]", "", (s or "").upper())
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not t or not k:
+        return ""
+    ncol = len(k)
+    nrow = (len(t) + ncol - 1) // ncol
+    grid = [t[i * ncol:(i + 1) * ncol] for i in range(nrow)]
+    order = _row_order(key, nrow)
+    return "".join(grid[r] for r in order)
+
+
+def row_transposition_dec(s, key):
+    t = re.sub(r"[^A-Z]", "", (s or "").upper())
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    if not t or not k:
+        return []
+    ncol = len(k)
+    nrow = (len(t) + ncol - 1) // ncol
+    order = _row_order(key, nrow)
+    # 各行的真实长度：满行数 = len // ncol，最后一行是 len % ncol（可能没有尾行）。
+    # 注意不能套用列换位的公式（那个是「前 len%ncol 列长 nrow」），行和列的
+    # 余数分布是反的：23 字符 6 列 -> 4 行，长度是 6,6,6,5 而不是 6,6,6,6。
+    full_rows = len(t) // ncol
+    tail = len(t) % ncol
+    lens = [ncol if i < full_rows else tail for i in range(nrow)]
+    rows = {}
+    p = 0
+    for idx, r in enumerate(order):
+        if r < nrow:
+            rows[r] = t[p:p + lens[r]]
+            p += lens[r]
+    out = []
+    for r in range(nrow):
+        out.append(rows.get(r, ""))
+    return [("行置换（key=%s）" % key, "".join(out))]
+
+
+# ==================== Enigma 完善：插线板 + 环设置 ====================
+
+def _parse_plugboard(spec):
+    """解析插线板规格：'AB CD EF' 或 'AB,CD,EF' -> {A:B, B:A, ...}"""
+    pb = {}
+    for tok in re.split(r"[\s,，;；]+", (spec or "").strip()):
+        tok = re.sub(r"[^A-Z]", "", tok.upper())
+        if len(tok) == 2 and tok[0] != tok[1]:
+            pb[tok[0]] = tok[1]
+            pb[tok[1]] = tok[0]
+    return pb
+
+
+def _enigma_run_full(text, order, pos, reflector="B", plugboard=None, rings=None):
+    """完整 Enigma：支持插线板和环设置。
+
+    order:     从左到右的转子名元组
+    pos:       3 个初始位置字母（大写）
+    reflector: B / C
+    plugboard: {A: B, ...}
+    rings:     3 个环设置字母（A-Z），影响 notch 触发时机
+    """
+    wiring = []
+    notches = []
+    for nm in order:
+        w, n = _ENIGMA_ROTORS[nm]
+        wiring.append(w)
+        notches.append(n)
+    ref = _ENIGMA_REFLECTORS.get(reflector, _ENIGMA_REFLECTORS["B"])
+    pb = plugboard or {}
+    # 环设置：转子内部偏移，notch 位置也跟着平移
+    ring = [ord(c) - 65 for c in (rings or "AAA")]
+    p = [ord(c) - 65 for c in pos.upper()]
+    out = []
+    for ch in text:
+        c = ch.upper()
+        if not ("A" <= c <= "Z"):
+            continue
+        # 双步机构：中转子过 notch 时三个一起走（历史真实行为）
+        # notch 的实际位置受环设置影响：(notch_letter - ring) % 26
+        def _at_notch(i):
+            nl = ord(notches[i]) - 65
+            return (p[i] + ring[i]) % 26 == nl
+        # 右转子先走
+        p[2] = (p[2] + 1) % 26
+        if _at_notch(2):
+            p[1] = (p[1] + 1) % 26
+            if _at_notch(1):
+                p[0] = (p[0] + 1) % 26
+        # 插线板进
+        x = ord(pb.get(c, c)) - 65
+        # 正向：右 -> 中 -> 左（转子输出要减自己的位置，再加环偏移）
+        for i in (2, 1, 0):
+            entry = (x + p[i] - ring[i]) % 26
+            x = (ord(wiring[i][entry]) - 65 - p[i] + ring[i]) % 26
+        # 反射
+        x = ord(ref[x]) - 65
+        # 反向：左 -> 中 -> 右
+        for i in (0, 1, 2):
+            entry = (x + p[i] - ring[i]) % 26
+            x = (wiring[i].index(chr(entry + 65)) - p[i] + ring[i]) % 26
+        # 插线板出
+        out.append(pb.get(chr(x + 65), chr(x + 65)))
+    return "".join(out)
+
+
+def enigma_decode_full(text, key, plugboard=None, rings=None, order=None, reflector="B"):
+    """完整版 Enigma 解密：支持 key=CAT、plugboard=AB,CD、ring=ABC"""
+    k = re.sub(r"[^A-Z]", "", (key or "").upper())
+    t = re.sub(r"[^A-Za-z]", "", text)
+    if len(k) < 3 or len(t) < 4:
+        return []
+    if order is None:
+        order = ("I", "II", "III")
+    try:
+        r = _enigma_run_full(t, order, k[0:3], reflector,
+                             _parse_plugboard(plugboard), rings or "AAA")
+    except Exception:
+        return []
+    if not r:
+        return []
+    extra = ""
+    if plugboard:
+        extra += " 插线板=%s" % plugboard
+    if rings and rings.upper() != "AAA":
+        extra += " 环=%s" % rings.upper()
+    return [("Enigma M3（%s / %s%s）" % (" ".join(order), k[0:3], extra), r)]
+
+
 KEYED = [
     ("维吉尼亚", vigenere_decode),
     ("Playfair", playfair_decode),
@@ -1305,6 +1449,8 @@ KEYED = [
     ("Autokey", autokey_decode),
     ("Nihilist", nihilist_decode),
     ("Enigma", enigma_decode),
+    ("Enigma完整版", enigma_decode_full),
+    ("行置换", row_transposition_dec),
 ]
 
 

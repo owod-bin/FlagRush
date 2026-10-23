@@ -33,6 +33,8 @@ CORE_MODULES = [
     "cncode",
     # 第五轮：二进制/十六进制查询/文件合并拆分
     "binx", "hexq", "filemerge",
+    # 第六轮：DES/3DES
+    "desc",
 ]
 
 datas = [

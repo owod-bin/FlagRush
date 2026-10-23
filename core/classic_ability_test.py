@@ -249,6 +249,18 @@ add("Z85", "w]7)*DWmUeuVf.d", [])
 add("MIME Encoded-Word", "=?utf-8?B?ZmxhZ3ttaW1lX2VuY29kZWR9?=", [])
 
 
+# ---------- 19. 行置换 / DES / 3DES / Enigma 完整版 ----------
+import sys as _sys
+_sys.path.insert(0, "core")
+import classic as _C
+import desc as _D
+
+add("行置换", _C.row_transposition_enc("meetatnoon", "crypto") + "\nkey=crypto", [])
+_DK = bytes.fromhex("133457799BBCDFF1")
+add("DES", _D.des_encrypt(b"flag{des_ability}", _DK).hex() + "\nkey=" + _DK.hex(), [])
+add("3DES", _D.triples_des_encrypt(b"flag{triples_ability}", _DK).hex() + "\nkey=" + _DK.hex(), [])
+
+
 def main():
     ok = 0
     rows = []

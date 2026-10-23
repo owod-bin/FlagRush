@@ -1494,6 +1494,67 @@ def analyze(path, outdir=None, deep=True, verbose=True):
         except Exception:
             pass
 
+    # 5.5) 文件是不是被合并/拼接/交错过的（CTF「两个文件合在一起」题型）
+    if deep and size >= 64:
+        try:
+            import filemerge as _fm
+            plans = _fm.detect_merge(data[:16 * 1024 * 1024])
+            if plans:
+                for desc, conf, parts in plans[:3]:
+                    rep["notes"].append("★ 文件合并探测（%.0f%%）：%s" % (conf * 100, desc))
+                    rep["suggest"] = rep.get("suggest", [])
+                    if isinstance(rep.get("suggest"), list):
+                        rep["suggest"].append("按上面的方案拆分后逐个再跑一次本工具")
+                # 落地第一套方案
+                if outdir:
+                    try:
+                        _lines, _saved = _fm.auto_split(data[:16 * 1024 * 1024],
+                                                        os.path.join(outdir, "_split"))
+                        rep["extra"] += ["拆分产物：" + os.path.basename(x) for x in _saved[:8]]
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # 5.6) PNG 块级体检（CRC 被故意改坏 / 私有块藏数据）
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        try:
+            import stego as _st
+            for desc, body in _st.png_anomaly(data):
+                rep["notes"].append("★ " + desc)
+                if body and len(body) >= 4:
+                    _h, _c = find_flags_in(body)
+                    rep["flags"] += [x.decode("utf-8", "ignore") for x in _h]
+        except Exception:
+            pass
+
+    # 5.7) ZIP 注释隐写（unzip -l 看不到的那种）
+    if data[:2] == b"PK" or b"PK\x03\x04" in data[:4096]:
+        try:
+            import stego as _st
+            for desc, body in _st.zip_secrets(data[:16 * 1024 * 1024]):
+                rep["notes"].append("★ " + desc)
+                if body:
+                    _h, _c = find_flags_in(body)
+                    rep["flags"] += [x.decode("utf-8", "ignore") for x in _h]
+                    if _c:
+                        rep["cands"] += [x.decode("utf-8", "ignore") for x in _c]
+        except Exception:
+            pass
+
+    # 5.8) 音频：DTMF 拨号音（电话键盘藏数字）
+    if data[:4] == b"RIFF" and b"WAVE" in data[:16]:
+        try:
+            import mediax as _mx
+            _txt, _note = _mx.dtmf_from_wav(path)
+            if _txt:
+                rep["notes"].append("★ DTMF 拨号音解出：%s（%s）" % (_txt, _note))
+                for _ch in (_txt, _txt.replace("#", "").replace("*", "")):
+                    _h, _c = find_flags_in(_ch.encode())
+                    rep["flags"] += [x.decode("utf-8", "ignore") for x in _h]
+        except Exception:
+            pass
+
     # 6) 雕刻内嵌文件（音频里全是误报，跳过）
     if deep and size > 1024 and not data.startswith(b"RIFF"):
         base = outdir or os.path.join(os.path.dirname(os.path.abspath(path)), "_carved")
