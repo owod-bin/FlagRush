@@ -84,10 +84,17 @@ python ctf_oneclick.pyw
 | `tools/` | 7-Zip、ExifTool、UPX、hashcat | 423 MB |
 | `dist/` | PyInstaller 打包的 exe | 807 MB |
 
-到 [Releases](../../releases) 页面下载，解压后双击 `启动网页版.bat` 即可。
+> 完整包**暂未上传 Release**（GitHub 单文件限 100MB，1.8GB 需要 Git LFS 或网盘）。
+> 需要的话可以本地自行构建：
 
-> **便携提示**：换机器 / U 盘拷贝时，`core` + `runtime` + `tools` + `webui.html` 要一起拷，
-> 少了 `tools/` 会导致 7z/exiftool/upx 相关功能静默跳过。
+```bash
+python 搭建内置环境.py      # 把便携版 Python 下载到 runtime/
+# 再把 7-Zip / ExifTool / UPX 解压到 tools/ 对应子目录
+python build_package.py     # 打包成 dist/FlagRush/
+```
+
+**便携提示**：换机器 / U 盘拷贝时，`core` + `runtime` + `tools` + `webui.html` 要一起拷，
+少了 `tools/` 会导致 7z/exiftool/upx 相关功能静默跳过。
 
 ---
 
