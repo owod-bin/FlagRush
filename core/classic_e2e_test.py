@@ -6,6 +6,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import runner  # noqa
 
+# 输出兜底：GBK 控制台（中文 Windows 默认）遇到 ✅/❌/💥 会 UnicodeEncodeError，
+# 重定向到文件时必崩。宁可变问号也不要崩。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
+
 CASES = [
     ("凯撒 +3", "wkh txlfn eurzq ira mxpsv ryhu wkh odcb grj", "quick"),
     ("凯撒 +13", "synt vf uvqqra va cynva fvtug", "hidden"),

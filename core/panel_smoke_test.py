@@ -13,6 +13,14 @@ import zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import runner  # noqa
 
+# 输出兜底：GBK 控制台（中文 Windows 默认）遇到 ✅/❌/💥 会 UnicodeEncodeError，
+# 重定向到文件时必崩。宁可变问号也不要崩。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
+
 TMP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_smoke")
 os.makedirs(TMP, exist_ok=True)
 

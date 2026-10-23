@@ -23,6 +23,14 @@ import wave
 import tempfile
 from http.server import BaseHTTPRequestHandler
 
+# 输出兜底：GBK 控制台（中文 Windows 默认）遇到 å / ✅ / ❌ 会 UnicodeEncodeError，
+# 重定向到文件时必崩。宁可变问号也不要崩。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 

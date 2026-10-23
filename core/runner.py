@@ -5,8 +5,15 @@
 网页版（webserver.py）和桌面版调用同一个入口，保证两边结果一致。
 """
 import os
+import sys
 import time
 import threading
+
+# 内置 runtime Python 带 ._pth，运行在隔离模式，不会自动把脚本目录加进 sys.path，
+# 导致 "No module named 'misc'"。webserver.py 早就加了这段，runner.py 漏了。
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
 _TL = threading.local()
 

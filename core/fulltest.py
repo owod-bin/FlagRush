@@ -18,6 +18,14 @@ import shutil
 import tempfile
 import traceback
 
+# 输出兜底：GBK 控制台（中文 Windows 默认）遇到 ✅/❌/💥 会 UnicodeEncodeError，
+# 重定向到文件时必崩。宁可变问号也不要崩。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
@@ -34,6 +42,7 @@ def case(name, panel, value, want, note=""):
         if panel == "imgcmp":
             # 双图对比走 imgadv 的异或接口（不是 runner 的文本/文件入口）
             import imgadv
+
             ok, outs, msg = imgadv.img_xor(value[0], value[1])
             if ok and outs:
                 RESULTS.append((True, name, panel, time.time() - t0,

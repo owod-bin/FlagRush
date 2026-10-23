@@ -149,6 +149,14 @@ _ct_x2 = bytes(_pt_x[i].encode()[0] ^ _k[i % 4] for i in range(len(_pt_x)))
 add("crib: 重复密钥 XOR", _ct_x2.hex() + chr(10) + "crib=flag{", ["xor_single_byte_is_easy"])
 
 import base64 as _b64x
+
+# 输出兜底：GBK 控制台（中文 Windows 默认）遇到 ✅/❌/💥 会 UnicodeEncodeError，
+# 重定向到文件时必崩。宁可变问号也不要崩。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
 _b = _b64x.b64encode(b"flag{the_real_one}").decode()
 add("crib: 硬过滤命中", _b + chr(10) + "crib=flag{the", ["the_real_one"])
 
