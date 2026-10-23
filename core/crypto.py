@@ -2553,7 +2553,10 @@ def _analyze_uncached(text, max_depth=8):
     # Polybius / Playfair / 盲文 这类只能表示字母的密码，解出来没有大括号，
     # 单独提示一句，别让用户以为工具没解出来
     bodies = [t for _d, t, _s in r["results"] if _is_flag_body(t)]
-    if bodies and not r["hits"]:
+    # 只有「排第一的候选本身就是 flag 主体」时才提示，
+    # 否则会出现「顶部提示 ctfjvafjswws，但候选第 1 是 overthehillx」的自相矛盾
+    if (bodies and not r["hits"] and r["results"]
+            and _is_flag_body(r["results"][0][1])):
         notes.insert(0, ("解出疑似 flag 主体：" + bodies[0],
                          "这类密码只能表示字母，flag{} 需要自己补"))
 
