@@ -21,8 +21,8 @@
 | 类别 | 覆盖 |
 |---|---|
 | Base 家族 | Base16(=Hex)、32、32hex、36、45、58、62、64、64URL、85、91、92、100 |
-| 其它编码 | URL、HTML 实体、Unicode 转义、Quoted-Printable、xxencode、uuencode、Punycode、JS 转义 |
-| **古典密码** | 凯撒（25 位移）、仿射（312 组合）、**维吉尼亚（自动猜密钥）**、Atbash、ROT13/47/5、栅栏（2–12 栏）、培根、A1Z26（**含连写拆分**）、**希尔（矩阵）**、Playfair、Beaufort、Porta、Gronsfeld、Bifid、键盘左右移位、反转 |
+| 其它编码 | URL、HTML 实体、Unicode 转义、Quoted-Printable、xxencode、uuencode、Punycode、**UTF-7**、JS 转义 |
+| **古典密码** | 凯撒（25 位移）、仿射（312 组合）、**维吉尼亚（自动猜密钥）**、Atbash、ROT13/47/5、栅栏（2–12 栏）、**斯巴达棒**、**列换位**、培根、A1Z26（**含连写拆分**）、**希尔（矩阵）**、Playfair、Beaufort、Porta、Gronsfeld、Bifid、**四方密码（双密钥）**、**分数摩尔**、键盘左右移位、反转 |
 | **单表替换** | 任意替换表，用「词形匹配 + 英文四元组统计 + 模拟退火」求解（对标 quipqiup） |
 | 特殊语言 | 摩斯电码、二进制、八进制、十进制 ASCII、Brainfuck、Ook! |
 | **国内常见** | 零宽字符隐写、社会主义核心价值观编码、JSFuck（内置求值器）、**base64 填充位隐写**、当铺密码、手机键盘码、云影密码/01248、敲击码、盲文、Polybius 方阵 |
