@@ -196,6 +196,23 @@ add("四方密码（双密钥）",
 
 add("UTF-7", "+Ti1lh21Li9U-", ["中文测试"])
 
+# ---------- 14f. 第二批补充编码（对标随波逐流） ----------
+add("猪圈密码", "".join(crypto.PIGPEN[c] for c in "HELLO"), ["HELLO"])
+add("NATO 音标字母", "ALPHA BRAVO CHARLIE DELTA ECHO FOXTROT", ["ABCDEF"])
+add("DNA 密码", "GCT CAT GAT TTA AAA", ["AHDLK"])
+add("元素周期表（符号）", "HHeLiBeBCNOF", ["ABCDEFGHI"])
+add("元素周期表（序号）", "8 5 12 12 15", ["HELLO"])
+add("Cisco Type7", "0A7B6D7E7D787F6376", ["password"])
+add("博多码 Baudot", "10100 00001 10010 10010 11000", ["HELLO"])
+add("格雷码", "0100 1101 0011", ["011110010010"])
+add("BCD 码", "0100 0001 0010 0011", ["[4]"])
+add("keyCode 键码", "72 73 74 75", ["HIJK"])
+add("base64 大小写错乱", "zMxHz3tJyXnLx3rLc3r9", ["flag{case_test}"])
+add("Base64 自定义编码表", "ZmxhZ3tjdXN0b219", ["flag{custom}"])
+add("Malbolge（识别）",
+    "(=<`#9]~6ZY32Vx/4Rs+0No-&Jk)" + chr(34) + "Fh}|Bcy?", ["Malbolge"])
+add("Dvorak 键盘映射", "aoeuidhtns", ["uofladncvi"])
+
 # ---------- 15. 手机键盘 ----------
 add("手机键盘", "333 555 2 4", [])
 

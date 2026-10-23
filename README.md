@@ -21,7 +21,7 @@
 | 类别 | 覆盖 |
 |---|---|
 | Base 家族 | Base16(=Hex)、32、32hex、36、45、58、62、64、64URL、85、91、92、100 |
-| 其它编码 | URL、HTML 实体、Unicode 转义、Quoted-Printable、xxencode、uuencode、Punycode、**UTF-7**、JS 转义 |
+| 其它编码 | URL、HTML 实体、Unicode 转义、Quoted-Printable、xxencode、uuencode、Punycode、**UTF-7**、JS 转义、**猪圈密码**、**NATO 音标**、**DNA 密码**、**元素周期表**、**博多码 Baudot**、**格雷码**、**BCD**、**Cisco Type7**、**keyCode**、**Deadfish**、**Dvorak 键盘**、**base64 大小写错乱**、**Base64 自定义编码表**、**ASCII 偏移**、Malbolge（识别）|
 | **古典密码** | 凯撒（25 位移）、仿射（312 组合）、**维吉尼亚（自动猜密钥）**、Atbash、ROT13/47/5、栅栏（2–12 栏）、**斯巴达棒**、**列换位**、培根、A1Z26（**含连写拆分**）、**希尔（矩阵）**、Playfair、Beaufort、Porta、Gronsfeld、Bifid、**四方密码（双密钥）**、**分数摩尔**、键盘左右移位、反转 |
 | **单表替换** | 任意替换表，用「词形匹配 + 英文四元组统计 + 模拟退火」求解（对标 quipqiup） |
 | 特殊语言 | 摩斯电码、二进制、八进制、十进制 ASCII、Brainfuck、Ook! |

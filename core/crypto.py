@@ -279,6 +279,11 @@ def score(s):
     # 没有大括号的 flag 主体（Polybius / Playfair / 盲文 解出来就是这样）
     if _is_flag_body(s):
         sc += 5.0
+    # 以 flag/ctf 等关键词**开头**的短串（如二进制解出的 "flagbin"）：
+    # _is_flag_body 要求关键词后跟 4+ 字符，3 字符的就被漏掉了。
+    # 随机串以 flag 开头的概率极低，这个信号很干净。
+    elif re.match(r"(?i)^(flag|ctf|key|pass|secret)[a-z0-9_]{2,48}$", s):
+        sc += 2.5
     # 大括号不配对，扣分
     if s.count("{") != s.count("}"):
         sc -= 1.5
@@ -331,11 +336,17 @@ def score(s):
         #   motoaneigrdbtethateemen → that（1 个，且这是两步链刷出来的）
         if len(s) >= 10:
             low3 = s.lower()
-            wh = sum(1 for w in _WORDS4 if w in low3)
-            # 权重给到 3.5：619 个四字母以上词，随机串命中的期望只有 0.03 个，
-            # 而英文连写能命中好几个。这是无空格文本最可信的信号，必须压过
-            # 二元组/三元组（变位词在这些统计上和正解几乎一样，甚至会更高）。
-            sc += min(7.0, wh * 3.5)
+            hit_words = [w for w in _WORDS4 if w in low3]
+            # 去掉「一个词是另一个词子串」的重复计数：
+            # llxsecsells 会同时命中 sell 和 sells，重复计一次就把分数刷上去了。
+            # 只保留不被其它命中词包含的那些。
+            hit_words = [w for w in hit_words
+                         if not any(w != o and w in o for o in hit_words)]
+            wh = len(hit_words)
+            # 权重 2.0、上限 5.0：这个信号虽干净，但权重给太大（3.5/个）
+            # 会让「十六进制移位后碰巧含 what/call 的垃圾链」刷到 10 分，
+            # 把合法的深层链压掉（实测 base32→reverse→hex 就这么挂的）。
+            sc += min(5.0, wh * 2.0)
     return sc
 
 
@@ -567,6 +578,381 @@ def _t_b64stego(s):
     if sum(1 for c in txt if c.isprintable() or c in "\r\n\t") / len(txt) < 0.85:
         return []
     return [("base64 隐写（填充位）", txt)]
+
+
+# ============================================================
+# 补充编码（对标随波逐流后补的缺口）
+# ============================================================
+PIGPEN = {
+    "A": "\u25a1", "B": "\u25a0", "C": "\u25cb", "D": "\u25cf",
+    "E": "\u25b3", "F": "\u25b2", "G": "\u25c7", "H": "\u25c6",
+    "I": "\u2195", "J": "\u2194", "K": "\u21ff", "L": "\u2205",
+    "M": "\u220e", "N": "\u2219", "O": "\u221a", "P": "\u221f",
+    "Q": "\u2229", "R": "\u222a", "S": "\u2234", "T": "\u2237",
+    "U": "\u2261", "V": "\u2263", "W": "\u2265", "X": "\u2264",
+    "Y": "\u226b", "Z": "\u226a",
+}
+_PIGPEN_REV = {v: k for k, v in PIGPEN.items()}
+
+
+def _t_pigpen(s):
+    """猪圈密码：用符号表表示字母，解密就是反查"""
+    if not s or len(s) < 3:
+        return []
+    t = re.sub(r"[\s\u3000]+", "", s)
+    if not t:
+        return []
+    out, cur = [], []
+    for ch in t:
+        if ch in _PIGPEN_REV:
+            cur.append(_PIGPEN_REV[ch])
+        else:
+            if cur:
+                out.append("".join(cur))
+                cur = []
+    if cur:
+        out.append("".join(cur))
+    res = [x for x in out if len(x) >= 2]
+    if not res:
+        return []
+    return [("猪圈密码", " ".join(res))]
+
+
+def _t_nato(s):
+    """NATO 音标字母 → 字母"""
+    NATO = {
+        "ALPHA": "A", "BRAVO": "B", "CHARLIE": "C", "DELTA": "D", "ECHO": "E",
+        "FOXTROT": "F", "GOLF": "G", "HOTEL": "H", "INDIA": "I", "JULIET": "J",
+        "KILO": "K", "LIMA": "L", "MIKE": "M", "NOVEMBER": "N", "OSCAR": "O",
+        "PAPA": "P", "QUEBEC": "Q", "ROMEO": "R", "SIERRA": "S", "TANGO": "T",
+        "UNIFORM": "U", "VICTOR": "V", "WHISKEY": "W", "XRAY": "X",
+        "YANKEE": "Y", "ZULU": "Z",
+    }
+    words = re.findall(r"[A-Za-z]+", s.upper())
+    if len(words) < 3:
+        return []
+    hit = sum(1 for w in words if w in NATO)
+    if hit < len(words) * 0.6 or hit < 3:
+        return []
+    return [("NATO 音标字母", "".join(NATO[w] for w in words if w in NATO))]
+
+
+def _t_dna(s):
+    """DNA 密码：ACGT 三联体 → 氨基酸单字母 → 字母"""
+    # 标准遗传密码表，取每个氨基酸的单字母代码
+    CODON = {
+        "TTT": "F", "TTC": "F", "TTA": "L", "TTG": "L",
+        "CTT": "L", "CTC": "L", "CTA": "L", "CTG": "L",
+        "ATT": "I", "ATC": "I", "ATA": "I", "ATG": "M",
+        "GTT": "V", "GTC": "V", "GTA": "V", "GTG": "V",
+        "TCT": "S", "TCC": "S", "TCA": "S", "TCG": "S",
+        "CCT": "P", "CCC": "P", "CCA": "P", "CCG": "P",
+        "ACT": "T", "ACC": "T", "ACA": "T", "ACG": "T",
+        "GCT": "A", "GCC": "A", "GCA": "A", "GCG": "A",
+        "TAT": "Y", "TAC": "Y", "TAA": "*", "TAG": "*",
+        "CAT": "H", "CAC": "H", "CAA": "Q", "CAG": "Q",
+        "AAT": "N", "AAC": "N", "AAA": "K", "AAG": "K",
+        "GAT": "D", "GAC": "D", "GAA": "E", "GAG": "E",
+        "TGT": "C", "TGC": "C", "TGA": "*", "TGG": "W",
+        "CGT": "R", "CGC": "R", "CGA": "R", "CGG": "R",
+        "AGT": "S", "AGC": "S", "AGA": "R", "AGG": "R",
+        "GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
+    }
+    t = re.sub(r"[^ACGTacgt]", "", s).upper()
+    if len(t) < 9 or len(t) % 3:
+        return []
+    # 也试互补链
+    comp = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    variants = [("DNA 密码", t), ("DNA 互补链", "".join(comp[c] for c in t))]
+    out = []
+    for name, seq in variants:
+        aa = [CODON.get(seq[i:i + 3], "?") for i in range(0, len(seq), 3)]
+        txt = "".join(aa).replace("*", "")
+        if txt and "?" not in txt:
+            out.append((name, txt))
+    return out
+
+
+ELEMENTS = {
+    1: "H", 2: "He", 3: "Li", 4: "Be", 5: "B", 6: "C", 7: "N", 8: "O",
+    9: "F", 10: "Ne", 11: "Na", 12: "Mg", 13: "Al", 14: "Si", 15: "P",
+    16: "S", 17: "Cl", 18: "Ar", 19: "K", 20: "Ca", 21: "Sc", 22: "Ti",
+    23: "V", 24: "Cr", 25: "Mn", 26: "Fe", 27: "Co", 28: "Ni", 29: "Cu",
+    30: "Zn", 31: "Ga", 32: "Ge", 33: "As", 34: "Se", 35: "Br", 36: "Kr",
+    37: "Rb", 38: "Sr", 39: "Y", 40: "Zr", 41: "Nb", 42: "Mo", 43: "Tc",
+    44: "Ru", 45: "Rh", 46: "Pd", 47: "Ag", 48: "Cd", 49: "In", 50: "Sn",
+    51: "Sb", 52: "Te", 53: "I", 54: "Xe", 55: "Cs", 56: "Ba", 57: "La",
+    58: "Ce", 59: "Pr", 60: "Nd", 61: "Pm", 62: "Sm", 63: "Eu", 64: "Gd",
+    65: "Tb", 66: "Dy", 67: "Ho", 68: "Er", 69: "Tm", 70: "Yb", 71: "Lu",
+    72: "Hf", 73: "Ta", 74: "W", 75: "Re", 76: "Os", 77: "Ir", 78: "Pt",
+    79: "Au", 80: "Hg", 81: "Tl", 82: "Pb", 83: "Bi", 84: "Po", 85: "At",
+    86: "Rn", 87: "Fr", 88: "Ra", 89: "Ac", 90: "Th", 91: "Pa", 92: "U",
+    93: "Np", 94: "Pu", 95: "Am", 96: "Cm", 97: "Bk", 98: "Cf", 99: "Es",
+    100: "Fm", 101: "Md", 102: "No", 103: "Lr",
+}
+_SYM2NUM = {v: k for k, v in ELEMENTS.items()}
+
+
+def _t_element(s):
+    """元素周期表密码：元素符号 → 原子序数 → 字母（1=A, 26=Z）"""
+    t = s.strip()
+    if len(t) < 3:
+        return []
+    # 形式一：纯符号串，如 "HHeLiBe"
+    toks = re.findall(r"[A-Z][a-z]?", t)
+    if len(toks) >= 2 and "".join(toks) == t:
+        nums = [_SYM2NUM.get(x) for x in toks]
+        if all(n is not None for n in nums):
+            txt = "".join(chr(64 + (n % 26) if n % 26 else 90) for n in nums)
+            return [("元素周期表（符号）", txt)]
+    # 形式二：序号串，如 "8 5 12 12 15"
+    nums = [int(x) for x in re.findall(r"\d+", t)]
+    if len(nums) >= 2 and all(1 <= n <= 103 for n in nums):
+        txt = "".join(chr(64 + (n % 26) if n % 26 else 90) for n in nums)
+        return [("元素周期表（序号）", txt)]
+    return []
+
+
+def _t_type7(s):
+    """Cisco Type7 解密（异或 0x64 的固定算法，不是加密只是混淆）"""
+    t = re.sub(r"\s+", "", s)
+    if not re.fullmatch(r"[0-9A-Fa-f]{2,}", t) or len(t) < 4 or len(t) % 2:
+        return []
+    try:
+        seed = int(t[:2], 16)
+    except Exception:
+        return []
+    if seed > 52:
+        return []
+    out = []
+    for j, i in enumerate(range(2, len(t), 2), start=1):
+        out.append(int(t[i:i + 2], 16) ^ ((seed + j) % 256))
+    try:
+        r = bytes(out).decode("ascii")
+    except Exception:
+        return []
+    if r and all(32 <= ord(c) < 127 for c in r):
+        return [("Cisco Type7", r)]
+    return []
+
+
+def _t_deadfish(s):
+    """Deadfish：i/d/s/o 四个命令"""
+    t = re.sub(r"[^idsoIDSO]", "", s).lower()
+    if len(t) < 3 or "o" not in t:
+        return []      # 没有 o 命令就不会输出任何字符
+    v = 0
+    out = []
+    for c in t:
+        if c == "i":
+            v += 1
+        elif c == "d":
+            v -= 1
+        elif c == "s":
+            v *= v
+        else:
+            if v == -1 or v == 256:
+                v = 0
+            out.append(chr(v) if 0 <= v < 128 else "")
+    r = "".join(out)
+    nums = [ord(c) for c in out]
+    res = []
+    if r and sum(1 for c in r if c.isalnum() or c in "{}_") / len(r) > 0.8:
+        res.append(("Deadfish", r))
+    # Deadfish 本质是输出数字，CTF 里常要再按 ASCII 转一道
+    if nums:
+        res.append(("Deadfish（数值）", " ".join(str(x) for x in nums[:60])))
+    return res
+
+
+def _t_baudot(s):
+    """博多码 Baudot（ITA2）：5 位二进制 → 字母/数字"""
+    ITA2_L = {
+        "00000": "", "00001": "E", "00010": "\n", "00011": "A", "00100": " ",
+        "00101": "S", "00110": "I", "00111": "U", "01000": "\r", "01001": "D",
+        "01010": "R", "01011": "J", "01100": "N", "01101": "F", "01110": "C",
+        "01111": "K", "10000": "T", "10001": "Z", "10010": "L", "10011": "W",
+        "10100": "H", "10101": "Y", "10110": "P", "10111": "Q", "11000": "O",
+        "11001": "B", "11010": "G", "11011": "", "11100": "M", "11101": "X",
+        "11110": "V", "11111": "",
+    }
+    t = re.sub(r"[^01]", "", s)
+    if len(t) < 10 or len(t) % 5:
+        return []
+    out = []
+    for i in range(0, len(t), 5):
+        c = ITA2_L.get(t[i:i + 5], "")
+        out.append(c)
+    r = "".join(out)
+    if r and sum(1 for c in r if c.isalnum() or c in "{}_ ") / len(r) > 0.85:
+        return [("博多码 Baudot", r)]
+    return []
+
+
+def _t_gray(s):
+    """格雷码 → 二进制/十进制"""
+    t = re.sub(r"[^01]", "", s)
+    if len(t) < 4 or len(t) % 4:
+        return []
+    out = []
+    for i in range(0, len(t), 4):
+        g = t[i:i + 4]
+        b = g[0]
+        for j in range(1, 4):
+            b += str(int(b[-1]) ^ int(g[j]))
+        out.append(b)
+    binstr = "".join(out)
+    return [("格雷码→二进制", binstr)]
+
+
+def _t_bcd(s):
+    """BCD 码（8421）→ 十进制 → ASCII"""
+    t = re.sub(r"[^01]", "", s)
+    if len(t) < 8 or len(t) % 4:
+        return []
+    nums = []
+    for i in range(0, len(t), 4):
+        b = t[i:i + 4]
+        if not re.fullmatch(r"[01]{4}", b):
+            return []
+        nums.append(int(b, 2))
+    txt = "".join(chr(n) if 32 <= n < 127 else "[%d]" % n for n in nums)
+    return [("BCD 码", txt)]
+
+
+def _t_ascii_shift(s):
+    """ASCII 码整体偏移（还原）：每个字符的码值加减同一个量"""
+    t = re.sub(r"\s+", " ", s).strip()
+    if len(t) < 6:
+        return []
+    out = []
+    for d in range(-32, 33):
+        if d == 0:
+            continue
+        r = "".join(chr((ord(c) + d) % 128) for c in t)
+        good = sum(1 for c in r if 32 <= ord(c) < 127)
+        if good == len(r) and sum(1 for c in r if c.isalnum() or c in "{}_ ") / len(r) > 0.9:
+            out.append(("ASCII 偏移 %+d" % d, r))
+    return out[:4]
+
+
+def _t_b64_case(s):
+    """base64 大小写错乱解码
+
+    整串统一成大写/小写是没用的（原来就不是单一大小写）。
+    正确做法：base64 每 4 个字符解出 3 字节，所以可以**按组独立穷举大小写**
+    （每组 2^4=16 种），只保留能解出可打印字节的组合。
+    """
+    t = re.sub(r"\s+", "", s)
+    if len(t) < 8 or len(t) % 4 or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", t):
+        return []
+    groups = [t[i:i + 4] for i in range(0, len(t), 4)]
+    # 最后一组可能带 =，只有 2 种大小写组合中的一部分有效
+    out_bytes = bytearray()
+    for gi, g in enumerate(groups):
+        pad = g.count("=")
+        letters = g[:4 - pad]
+        found = None
+        for mask in range(1 << len(letters)):
+            cand = "".join(c.upper() if (mask >> k) & 1 else c.lower()
+                           for k, c in enumerate(letters)) + "=" * pad
+            try:
+                dec = base64.b64decode(cand)
+            except Exception:
+                continue
+            if all(32 <= b < 127 or b in (9, 10, 13) for b in dec):
+                found = dec
+                break
+        if found is None:
+            # 这组解不出可打印字节，用原样试一次，失败就放弃
+            try:
+                found = base64.b64decode(g)
+            except Exception:
+                return []
+        out_bytes += found
+    try:
+        r = out_bytes.decode("utf-8")
+    except Exception:
+        return []
+    if r and r != s and sum(1 for c in r if c.isprintable()) / len(r) > 0.9:
+        return [("base64 大小写错乱", r)]
+    return []
+
+
+def _t_b64_custom(s):
+    """任意进制 Base 自定义编码表：默认标准表，也试几个常见变体"""
+    t = re.sub(r"\s+", "", s)
+    if len(t) < 8 or len(t) % 4 or not re.fullmatch(r"[!-~]+", t):
+        return []
+    variants = [
+        ("标准", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+        ("URL 安全", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"),
+        ("反转表", "/+9876543210zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJIHGFEDCBA"),
+    ]
+    out = []
+    for name, alpha in variants:
+        try:
+            r = base64.b64decode(t.translate(
+                str.maketrans(alpha, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"))
+                + "=" * ((-len(t)) % 4)).decode("utf-8")
+            if r and r != s and sum(1 for c in r if c.isprintable()) / len(r) > 0.9:
+                out.append(("Base64 自定义表（%s）" % name, r))
+        except Exception:
+            pass
+    return out
+
+
+def _t_bubble(s):
+    """Bubble Babble 解码（形如 xexax-xexax-...）"""
+    t = s.strip()
+    if not re.fullmatch(r"[a-z]{5}(-[a-z]{5})*", t):
+        return []
+    # Bubble Babble 太冷门，只做识别提示，不实现完整解码
+    return [("Bubble Babble（识别）", "形如 xesef-disof-getry 的格式，需专用工具解")]
+
+
+def _t_dvorak(s):
+    """Dvorak 键盘布局当作 QWERTY 按出来的还原"""
+    # Dvorak 的字母键按物理位置排：' , . p y / f g c r / a o e u i / d h t n s / ; q j k x / b m w v z
+    # 取其中的字母：p y f g c r a o e u i d h t n s q j k x b m w v z（25 个）
+    # QWERTY 字母键按物理位置：q w e r t y u i o p a s d f g h j k l z x c v b n m（26 个）
+    # 「在 Dvorak 布局上按出了 QWERTY 的键位」→ 看到的字符是 QWERTY 标签，
+    # 真实意图是该物理位置的 Dvorak 输出，所以反向映射。
+    DVORAK_OUT = "pyfgcrlaoeuidhtnsqjkxbmwvz"      # 物理位置 → Dvorak 输出
+    QWERTY_LABEL = "qwertyuiopasdfghjklzxcvbnm"     # 物理位置 → QWERTY 标签
+    tbl = str.maketrans(QWERTY_LABEL, DVORAK_OUT)
+    t = s.strip()
+    if len(t) < 4 or not re.fullmatch(r"[A-Za-z ,.'/;=\-]+", t):
+        return []
+    r = t.translate(tbl)
+    if r != t:
+        return [("Dvorak 键盘映射", r)]
+    return []
+
+
+def _t_keycode(s):
+    """JS keyCode 键码值 → 字符"""
+    nums = [int(x) for x in re.findall(r"\d+", s)]
+    if len(nums) < 3 or not all(0 <= n <= 222 for n in nums):
+        return []
+    out = []
+    for base, name in ((48, "数字键 0-9"), (65, "字母 A-Z")):
+        r = "".join(chr(n) if base <= n < base + 26 else "" for n in nums)
+        if r and len(r) >= 3:
+            out.append(("keyCode（%s）" % name, r))
+    return out
+
+
+def _t_malbolge(s):
+    """Malbolge 识别（只认特征，不实现解释器）"""
+    t = s.strip()
+    if len(t) < 20:
+        return []
+    punct = sum(1 for c in t if not c.isalnum() and c != " ")
+    if punct / len(t) < 0.4:
+        return []
+    return [("Malbolge（识别）", "标点占比 %.0f%%，符合 Malbolge 特征，需专用解释器运行"
+             % (punct * 100.0 / len(t)))]
 
 
 def _t_b32(s):
@@ -1843,7 +2229,10 @@ def _t_encmore(s):
 DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_url, _t_b16, _t_b64, _t_b32, _t_b85, _t_b58, _t_b62, _t_b36, _t_b45, _t_b91,
        _t_uu, _t_unicode, _t_html, _t_qp, _t_morse, _t_binary, _t_octal, _t_dec,
-       _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore]
+       _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore,
+       _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
+       _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
+       _t_bubble, _t_dvorak, _t_keycode, _t_malbolge]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
 def _t_utf7(s):
@@ -1891,7 +2280,12 @@ AMB = [_t_rail, _t_caesar, _t_a1z26_nosep, _t_affine, _t_keyboard,
        _t_scytale, _t_columnar, _t_utf7]
 
 # 全部变换（expand() 用；之前漏了这行定义，一调用就 NameError）
-TRANSFORMS = DET + AMB
+# EXTRA 是「只做单步展示、不进链条」的变换：
+#   _t_ascii_shift 一次吐 64 个偏移变体，放进 DET 会被 peel 当成
+#   确定性解码器乱套（实测把 base32 解对的中间态又移 +1 毁掉），
+#   放进 AMB 会让每个节点多 64 个子节点、直接组合爆炸。
+EXTRA = [_t_ascii_shift]
+TRANSFORMS = DET + AMB + EXTRA
 
 
 def expand(text):
@@ -2017,6 +2411,14 @@ def peel(text, max_steps=12):
             # 无歧义解码器（Base16/Base64/十进制/二进制…）解出来是唯一结果，
             # 不该因为「分数没涨」就被丢掉 —— 多轮套娃里中间态本来就常常更丑
             if hf or _is_unambiguous(name) or s2 > sc + 0.4 or _looks_encoded(res):
+                # 长度骤降保护：一步把文本压到 40% 以下，基本是「元素周期表」
+                # 这类只取 digits/字母的提取型变换，会把中间态毁掉。
+                # 实测 base32→reverse→hex 这条链就是被 元素周期表 把
+                # 40 字符的 base32 串压成 4 字符 "BEDG"，后续再也接不回去。
+                # 除非直接解出 flag，否则不接受。
+                if (not hf and len(res) < len(cur) * 0.4
+                        and not _is_unambiguous(name)):
+                    continue
                 picked = (s2, name, res, hf)
                 break
         if not picked:
@@ -2207,6 +2609,22 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
         if any(_is_flag_body(t) for _, _, t in pool):
             frontier = []
 
+    # ---- 所有变换对原文各做一次，全部入池
+    # 之前只展开 AMB（12 个古典/换位类变换），DET 里的编码类（猪圈 / NATO /
+    # DNA / 元素周期表 / Type7 / 博多码 / 格雷码 / BCD / keyCode /
+    # 大小写错乱 base64 / 自定义 Base 表 / Dvorak …）只能通过 peel 的
+    # 「单一最优链」到达，经常整类都被别的变换挤掉，用户在候选里根本看不到。
+    if not hits:
+        try:
+            for _nm, _res in expand(text):
+                if not _res or hash(_res) in seen:
+                    continue
+                seen.add(hash(_res))
+                note(_res, _nm)
+                pool.append((score(_res), _nm, _res))
+        except Exception:
+            pass
+
     # ---- A* 搜索：优先队列按「分数 - 层数惩罚」全局挑最有希望的分支展开
     # 旧的「分层 beam」是同一层所有分支一视同仁，明显没救的路径也要占满整层算力；
     # A* 则先钻最有希望的那条，同样时间预算能搜得更深。
@@ -2220,6 +2638,13 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
         return sc - 1.3 * depth + (0.6 if depth <= 1 else 0.0)
 
     def _push(txt, desc, depth, sc):
+        # 太短的节点不入堆：3 字符的节点展开一次又产生 ~343 个子节点
+        # （_t_affine 一家就 312 个），会组合爆炸把预算烧光，
+        # 导致真正该展开的「原文」节点根本没被处理。
+        # 实测：peel 把 33 字符密文解成 "HRQ" 后，20000 次预算全耗在
+        # 3 字符串的凯撒/仿射变体上，Base64+凯撒 这条两层链直接找不到。
+        if len(txt) < 8:
+            return
         _hq.heappush(_heap, (-_pri(sc, depth), _seq[0], txt, desc, depth))
         _seq[0] += 1
         # 堆太大时砍掉最差的一批（保留 beam*20），控制内存
@@ -2288,9 +2713,14 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
         # 给了 crib 的候选直接顶到最前面（这是「用户明确知道答案长什么样」的强信号）
         if _CURRENT_CRIB and _CURRENT_CRIB in _r:
             bonus += 20.0
-        return -(sc - 0.55 * st + bonus)
+        # 层数惩罚要从 0.55 提到 1.3，和 A* 堆优先级保持一致：
+        # 之前堆里罚、排序不罚，导致 5 层垃圾链（文本分 10.5）在最终排序里
+        # 压过单步正解（文本分 4.0 + 0.4），二进制用例直接掉到第 38 名。
+        return -(sc - 1.3 * st + bonus)
 
-    results = sorted(res_map.values(), key=_rank_key)[:40]
+    # 展示 60 条：猪圈/NATO/DNA/元素周期表这类解出来只有 5~9 个字符，
+    # 分数天然低，40 条时经常被挤看不到（实测都在池子里，只是排名靠后）
+    results = sorted(res_map.values(), key=_rank_key)[:60]
 
     # 命中去噪：先去掉被更完整 flag 包含的碎片，再只保留「层数最少」的一批
     # 统一返回 (链路, flag) 的顺序，和界面/命令行一致
@@ -2617,6 +3047,21 @@ def _analyze_uncached(text, max_depth=8):
                 "elapsed": hc["elapsed"], "hash_only": h, "hash_cracked": hc["plain"]}
 
     notes = identify(text)
+
+    # ---- 短输出变换的补充提示
+    # 猪圈/NATO/DNA/元素周期表/格雷码/BCD 这类解出来只有 5~12 个字符，
+    # 分数天然低，在 60 条候选里也排不进来。但它们的识别度很高
+    # （输入是全大写单词 / ACGT / 元素符号），解出来基本就是对的，
+    # 所以在 notes 里直接告诉用户，省得翻候选。
+    try:
+        for _nm, _res in expand(text):
+            if not _res or len(_res) > 24 or _res == text:
+                continue
+            if _nm.startswith(("猪圈", "NATO", "DNA", "元素周期表", "格雷码", "BCD",
+                              "博多码", "Deadfish", "keyCode", "Cisco", "Dvorak")):
+                notes.append(("★ %s → %s" % (_nm, _res), "短输出，排名低但识别度高"))
+    except Exception:
+        pass
 
     # ---- 自动判定「几层加密」
     depths = []
