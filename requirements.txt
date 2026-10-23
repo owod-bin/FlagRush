@@ -1,0 +1,22 @@
+# CTF 一把梭 —— Python 依赖清单
+# 装法：双击「安装依赖.bat」，或
+#   python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 核心：缺了会明显掉能力
+Pillow
+numpy
+pycryptodome
+sympy
+opencv-python
+
+# 可选：缺了只是少一两个功能
+pyzbar
+gmpy2
+z3-solver
+pwntools
+capstone
+py7zr
+rarfile
+pymupdf
+python-docx
+openpyxl

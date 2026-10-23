@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+
+<title>FlagRush · CTF Toolkit</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--card2:#1c2128;--line:#21262d;--fg:#e6edf3;--dim:#7d8590;
+--acc:#22d3ee;--ok:#3fb950;--okbg:#0f2a1a;--okline:#238636;--warn:#d29922;--warnbg:#2a2109;
+--input:#0d1117;--soft:#1c2128;--shadow:rgba(0,0,0,.35);
+--err:#f85149;--danger:#f85149;--acc-fg:#0d1117;--mono:Consolas,"SF Mono",monospace;}
+body.light{--bg:#f6f8fa;--card:#ffffff;--card2:#f6f8fa;--line:#d0d7de;--fg:#1f2328;--dim:#656d76;
+--acc:#0969da;--ok:#1a7f37;--okbg:#dafbe1;--okline:#2da44e;--warn:#9a6700;--warnbg:#fff8c5;
+--input:#ffffff;--soft:#eaeef2;--shadow:rgba(31,35,40,.12);
+--err:#cf222e;--danger:#cf222e;--acc-fg:#ffffff;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 -apple-system,"Microsoft YaHei",sans-serif}
+header{background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.hwrap{max-width:1040px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:16px}
+.logo{font-weight:700;font-size:16px;white-space:nowrap}
+.logo small{font-weight:400;color:var(--dim);font-size:12px;margin-left:6px}
+.search{flex:1;display:flex;gap:8px}
+.search input{flex:1;padding:10px 14px;border:1px solid var(--line);border-radius:9px;font-size:14px;outline:none;background:var(--input)}
+.search input:focus{border-color:var(--acc);background:var(--card);box-shadow:0 0 0 3px rgba(34,211,238,.18)}
+.search select{padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--dim);font-size:13px}
+main{max-width:1040px;margin:0 auto;padding:20px 20px 80px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.card>.hd{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;background:var(--card2)}
+.card>.hd .t{font-weight:600;font-size:14px}
+.card>.hd .hint{color:var(--dim);font-size:12.5px;margin-left:auto}
+.card>.bd{padding:14px 16px}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.tab{padding:7px 13px;border:1px solid var(--line);border-radius:999px;font-size:13.5px;cursor:pointer;background:var(--card);color:var(--fg)}
+.tab:hover{border-color:var(--acc)}
+.tab.on{background:var(--acc);border-color:var(--acc);color:var(--acc-fg);font-weight:600}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--dim);
+font-size:13.5px;background:var(--input);margin-bottom:10px;transition:.15s}
+#drop.hot{border-color:var(--acc);background:rgba(34,211,238,.10);color:var(--acc)}
+textarea{width:100%;min-height:92px;padding:12px;border:1px solid var(--line);border-radius:10px;
+font:13.5px/1.6 var(--mono);resize:vertical;outline:none;background:var(--input)}
+textarea:focus{border-color:var(--acc);background:var(--input)}
+.acts{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+button{cursor:pointer;border:0;border-radius:9px;padding:10px 18px;font-size:14px;font-family:inherit}
+.primary{background:var(--acc);color:var(--acc-fg);font-weight:600}
+.primary:disabled{opacity:.55;cursor:default}
+.ghost{background:var(--soft);color:var(--fg)}
+.mini{font-size:12.5px;padding:7px 12px;border-radius:8px}
+.status{margin-left:auto;color:var(--dim);font-size:12.5px}
+/* 结论 */
+.verdict{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;margin-bottom:12px}
+.verdict.hit{background:var(--okbg);border:1px solid var(--okline)}
+.verdict.miss{background:var(--warnbg);border:1px solid var(--warn)}
+.verdict .big{font-size:22px;line-height:1.3;font-weight:700;font-family:var(--mono);word-break:break-all}
+.verdict .big.ok{color:var(--ok)}
+.verdict .sub{color:var(--dim);font-size:13px;margin-top:4px}
+.copy{margin-left:auto;flex:none}
+.flagrow{display:flex;align-items:center;gap:10px;padding:8px 0}
+.flagrow+.flagrow{border-top:1px dashed var(--line)}
+.chain{color:var(--dim);font-size:12.5px;font-family:var(--mono)}
+/* 分区 */
+.sec{border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+.sec>.sh{padding:9px 13px;background:var(--soft);font-size:13.5px;font-weight:600;color:var(--fg);cursor:pointer;
+display:flex;align-items:center;gap:8px;border-bottom:1px solid transparent}
+.sec.open>.sh{border-bottom-color:var(--line)}
+.sec>.sb{display:none;padding:10px 13px;font:13px/1.75 var(--mono);white-space:pre-wrap;word-break:break-word}
+.sec.open>.sb{display:block}
+.sec .n{color:var(--dim);font-weight:400;font-size:12px;margin-left:auto}
+.it{padding:2px 0}
+.it.ok{color:var(--ok);font-weight:600}
+.it.warn{color:var(--warn)}
+.it.dim{color:var(--dim)}
+.it.err{color:var(--err)}
+.raw{display:none;margin-top:10px}
+.raw.on{display:block}
+.raw pre{background:var(--input);color:var(--fg);padding:12px;border-radius:10px;font:12.5px/1.6 var(--mono);
+overflow:auto;max-height:420px;margin:0}
+.hist{display:flex;gap:10px;overflow:auto;padding-bottom:6px}
+.hitem{flex:none;width:220px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);cursor:pointer;font-size:12.5px}
+.hitem:hover{border-color:var(--acc)}
+.hitem .m{color:var(--dim);font-size:11.5px}
+.hitem .f{color:var(--ok);font-family:var(--mono);font-size:12px;margin-top:3px;word-break:break-all}
+.res{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+.res .p{font-weight:600;font-size:13.5px}
+.res .s{color:var(--dim);font-size:12.5px;margin-top:2px;word-break:break-all}
+mark{background:#fff3b0;border-radius:3px;padding:0 2px}
+.muted{color:var(--dim);font-size:13px}
+kbd{background:var(--soft);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px}
+@media (max-width:720px){
+  .hwrap{padding:10px 12px;flex-wrap:wrap}
+  .search{order:3;width:100%;margin-top:8px}
+  main{padding:12px 12px 60px}
+  .verdict .big{font-size:18px!important}
+  .hitem{width:180px}
+}
+
+.hdact{margin-left:auto;display:flex;gap:6px}
+.mini{background:var(--soft);border:1px solid var(--line);color:var(--fg);cursor:pointer}
+.mini:hover{border-color:var(--acc)}
+.mini.danger{color:var(--danger);border-color:var(--danger)}
+.mini.ok{background:var(--okbg);border-color:var(--okline);color:var(--ok)}
+.fmt{display:flex;align-items:center;gap:6px;margin-left:auto}
+.fmt label{font-size:12px;color:var(--dim);white-space:nowrap}
+.fmt input{width:190px;background:var(--input);border:1px solid var(--line);color:var(--fg);
+  border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--mono)}
+.fmt button{background:var(--card);border:1px solid var(--line);color:var(--acc);
+  border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}
+.fmt button:hover{border-color:var(--acc)}
+.fmt button.ok{background:var(--okbg);border-color:var(--okline);color:var(--ok)}
+</style>
+</head>
+<body>
+<header><div class="hwrap">
+  <div class="logo">FlagRush<small>CTF Toolkit · 离线</small></div>
+  <div class="search">
+    <input id="q" placeholder="搜历史结果 / 工作区文件里的关键词或 flag 片段（按 / 聚焦）">
+    <select id="scope"><option value="all">全部</option><option value="results">只看结果</option><option value="files">只看文件</option></select>
+  </div>
+  <div class="fmt">
+    <label for="fmtv">flag 格式</label>
+    <input id="fmtv" placeholder="如 DASCTF,MYTEAM（留空=内置）">
+    <button id="fmtgo">应用</button>
+  </div>
+  <span class="muted" id="tools"></span>
+  <button class="ghost mini" id="theme" title="切换白天 / 夜间" style="white-space:nowrap">🌙 夜间</button>
+</div></header>
+
+<main>
+  <div class="card">
+    <div class="hd"><span class="t">第一步：选方向，把东西丢进来</span><span class="hint" id="phint"></span></div>
+    <div class="bd">
+      <div class="tabs" id="tabs"></div>
+      <div id="drop">把题目文件拖到这里（会自动上传并分析）　或　点下面的「选择文件」</div>
+      <textarea id="value" placeholder="也可以直接粘贴密文 / URL / n e c…"></textarea>
+      <div class="acts">
+        <button class="primary" id="go">开始分析</button>
+        <button class="ghost" id="pick">选择文件</button>
+        <button class="ghost" id="cmp" title="选两张图，异或/相加找隐藏水印">双图对比</button>
+        <button class="ghost" id="expmd" style="display:none">导出 .md</button>
+        <input type="file" id="file" hidden>
+        <input type="file" id="file2" multiple hidden accept="image/*">
+        <span class="status" id="status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="result"></div>
+
+  <div class="card">
+    <div class="hd"><span class="t">最近分析</span>
+      <span class="hint">点一条可以回看 / 重跑</span>
+      <span class="hdact">
+        <button class="mini" id="cleanup" title="删掉 _carved / _位平面 / 频谱图 / 上传文件等临时产物">清临时文件</button>
+        <button class="mini danger" id="clearhist" title="清空下面的分析记录">清空历史</button>
+      </span>
+    </div>
+    <div class="bd"><div class="hist" id="hist"><span class="muted">还没有记录</span></div></div>
+  </div>
+</main>
+
+<script>
+const PANELS=[
+ ["auto","⓪ 一键（推荐）","文件：不知道选哪个就点这个，自动认类型把该跑的都跑一遍，flag 提到最上面"],
+ ["misc","① 综合 Misc","文件：认类型、找 flag、PNG 改高度、伪加密、GIF 帧、位平面、频谱、UPX、7z"],
+ ["crypto","② 编码密码","文本：Base 家族 11 种 + 古典密码，最多 8 层嵌套"],
+ ["rev","③ 逆向","文件：PE/ELF 结构、壳、关键字符串"],
+ ["web","④ Web","文本：URL/JWT 多轮解码 + 扫描命令 + payload"],
+ ["webscan","⑧ 渗透扫描","文本：给 URL，真发请求找源码泄露/注入/弱口令并提 flag"],
+ ["forensic","⑤ 取证","文件：pcap 提文件、图片 EXIF"],
+ ["pwn","⑥ Pwn","文件：checksec、偏移计算"],
+ ["rsa","⑦ RSA","文本：n/e/c 九种攻击（含 Håstad）"]
+];
+const TEXT=["crypto","web","webscan","rsa"];
+let cur="auto", busy=false, lastRes=null, lastTarget="";
+
+// ---- flag 格式：加载当前配置 / 保存新配置
+async function loadFormat(){
+  try{
+    const r=await fetch("/api/flagformat"); const d=await r.json();
+    if(d.ok){
+      document.getElementById("fmtv").value=(d.custom||[]).join(",");
+      const n=d.total||0;
+      document.getElementById("fmtv").placeholder="如 DASCTF,MYTEAM（留空=内置 "+n+" 个）";
+    }
+  }catch(e){}
+}
+async function saveFormat(){
+  const v=document.getElementById("fmtv").value.trim();
+  const b=document.getElementById("fmtgo");
+  try{
+    const r=await fetch("/api/flagformat",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({value:v})});
+    const d=await r.json();
+    if(d.ok){
+      b.textContent="已应用"; b.classList.add("ok");
+      setTimeout(()=>{b.textContent="应用"; b.classList.remove("ok");},1500);
+      loadFormat();
+    }else{
+      b.textContent="失败"; setTimeout(()=>{b.textContent="应用";},1500);
+      alert("保存失败："+(d.error||""));
+    }
+  }catch(e){
+    b.textContent="失败"; setTimeout(()=>{b.textContent="应用";},1500);
+  }
+}
+
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function tabs(){
+  const box=document.getElementById('tabs'); box.innerHTML='';
+  PANELS.forEach(p=>{const b=document.createElement('button');b.className='tab'+(p[0]===cur?' on':'');
+    b.textContent=p[1]; b.onclick=()=>{cur=p[0];tabs();phint();}; box.appendChild(b);});
+}
+function phint(){
+  const p=PANELS.find(x=>x[0]===cur);
+  document.getElementById('phint').textContent=p[2];
+  const ta=document.getElementById('value');
+  ta.placeholder=TEXT.includes(cur)?'粘贴密文 / URL / n e c…（Ctrl+Enter 分析）'
+    :'可以粘贴文件完整路径；也可以直接拖文件进来（推荐）';
+  document.getElementById('drop').style.display=TEXT.includes(cur)?'none':'block';
+}
+async function status(){
+  try{
+    const r=await (await fetch('/api/status')).json();
+    const on=Object.entries(r.tools).filter(([k,v])=>v&&['7z','exiftool','upx','bkcrack','ffmpeg'].includes(k)).map(([k])=>k);
+    document.getElementById('tools').textContent = on.length? '内置：'+on.join(' · ') : '内置工具未就绪';
+  }catch(e){document.getElementById('tools').textContent='服务未连接';}
+}
+function setBusy(b,msg){busy=b;document.getElementById('go').disabled=b;
+  document.getElementById('go').textContent=b?'分析中…':'开始分析';
+  document.getElementById('status').textContent=msg||'';}
+
+async function analyze(value){
+  setBusy(true,'正在跑引擎…');
+  const res=document.getElementById('result');
+  res.innerHTML='<div class="card"><div class="bd muted">分析中，大文件可能要几秒…</div></div>';
+  try{
+    const r=await (await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({panel:cur,value:value})})).json();
+    lastRes=r; lastTarget=value;
+    render(r,value);
+  }catch(e){
+    res.innerHTML='<div class="card"><div class="bd it err">请求失败：'+esc(e.message)+'</div></div>';
+  }
+  setBusy(false,''); loadHist();
+}
+
+function fmtSize(n){
+  n=Number(n)||0;
+  if(n<1024) return n+' B';
+  if(n<1024*1024) return (n/1024).toFixed(1)+' KB';
+  return (n/1024/1024).toFixed(1)+' MB';
+}
+
+function render(r,value){
+  const box=document.getElementById('result');
+  const pname=(PANELS.find(p=>p[0]===cur)||[,''])[1];
+  let h='<div class="muted" style="margin:2px 2px 8px">'+esc(pname)+' · '+esc(String(value).slice(0,60))+
+        ' · '+new Date().toLocaleTimeString()+'</div>';
+  if(!r.ok){
+    h+='<div class="card"><div class="bd"><div class="it err">出错：'+esc(r.error||'')+'</div>'+
+       '<pre style="white-space:pre-wrap;font:12.5px/1.6 var(--mono);color:#b91c1c">'+
+       esc((r.lines||[]).map(x=>x[0]).join('\n'))+'</pre></div></div>';
+    box.innerHTML=h; return;
+  }
+  const flags=r.flags||[];
+  if(flags.length){
+    h+='<div class="verdict hit"><div style="flex:1">'+
+       '<div class="sub">找到 flag（点右侧复制）</div>';
+    flags.forEach((f,i)=>{
+      h+='<div class="flagrow"><div class="big ok" style="font-size:'+(i===0?'22px':'16px')+'">'+esc(f)+'</div></div>';
+    });
+    h+='</div><button class="ghost mini copy" data-f="'+esc(flags[0])+'">复制</button></div>';
+  }else{
+    h+='<div class="verdict miss"><div style="flex:1"><div class="big" style="font-size:17px;color:#b45309">没有直接命中 flag</div>'+
+       '<div class="sub">看下面的「关键发现」，或者换个方向再跑一次（比如先跑综合，再跑编码）</div></div></div>';
+  }
+  const secs=r.sections||[];
+  // 提取出来的文件（流量包里的 zip/docx/图片、雕刻的内嵌文件）—— 直接点就能下载到本地
+  const dls=r.downloads||[];
+  if(dls.length){
+    h+='<div class="card"><div class="hd"><div class="t">提取的文件（'+dls.length+' 个，点文件名下载到本地）</div></div><div class="bd">';
+    dls.forEach(d=>{
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)">'+
+         '<a href="'+esc(d.url)+'" download style="color:var(--acc);text-decoration:none;font:13px var(--mono)">'+
+         esc(d.name)+'</a><span class="muted" style="font-size:12px">'+fmtSize(d.size)+'</span></div>';
+    });
+    h+='<div class="muted" style="font-size:12px;margin-top:8px">也可以一次全下：<a href="#" id="dlall" style="color:var(--acc)">打包下载全部</a></div>';
+    h+='</div></div>';
+  }
+  secs.forEach((s,i)=>{
+    const open = i===0;
+    h+='<div class="sec'+(open?' open':'')+'"><div class="sh" onclick="this.parentNode.classList.toggle(\'open\')">'+
+       esc(s.title)+'<span class="n">'+s.items.length+' 行</span></div><div class="sb">'+
+       s.items.map(it=>'<div class="it '+it.tag+'">'+esc(it.t)+'</div>').join('')+'</div></div>';
+  });
+  h+='<div class="acts"><button class="ghost mini" onclick="document.getElementById(\'raw\').classList.toggle(\'on\')">'+
+     '显示/隐藏原始输出</button><button class="ghost mini" id="copyall">复制全部结果</button></div>'+
+     '<div class="raw" id="raw"><pre>'+
+     esc((r.lines||[]).map(x=>x[0]).join('\n'))+'</pre></div>';
+  box.innerHTML=h;
+  box.querySelectorAll('.copy').forEach(b=>b.onclick=()=>{
+    navigator.clipboard.writeText(b.dataset.f); b.textContent='已复制';
+    setTimeout(()=>b.textContent='复制',1000);});
+  const _da=document.getElementById('dlall');
+  if(_da) _da.onclick=(ev)=>{
+    ev.preventDefault();
+    (r.downloads||[]).forEach((d,i)=>setTimeout(()=>{
+      const a=document.createElement('a');
+      a.href=d.url; a.download=d.name; document.body.appendChild(a);
+      a.click(); document.body.removeChild(a);
+    }, i*350));
+  };
+  const ca=document.getElementById('copyall');
+  if(ca) ca.onclick=()=>{
+    const txt=(r.flags.length?('FLAG: '+r.flags.join('  ')+'\n\n'):'')+
+              (r.lines||[]).map(x=>x[0]).join('\n');
+    navigator.clipboard.writeText(txt); ca.textContent='已复制';
+    setTimeout(()=>ca.textContent='复制全部结果',1200);};
+}
+
+/* ---------- 白天 / 夜间 ---------- */
+(function(){
+  const KEY='fr_theme';
+  const btn=document.getElementById('theme');
+  function apply(t){
+    document.body.classList.toggle('light', t==='light');
+    if(btn) btn.textContent = (t==='light') ? '☀️ 白天' : '🌙 夜间';
+  }
+  apply(localStorage.getItem(KEY)||'dark');
+  if(btn) btn.onclick=()=>{
+    const next = document.body.classList.contains('light') ? 'dark' : 'light';
+    localStorage.setItem(KEY,next); apply(next);
+  };
+})();
+
+document.getElementById('go').onclick=()=>{
+  const v=document.getElementById('value').value.trim();
+  if(!v){document.getElementById('status').textContent='先粘贴内容或拖入文件';return;}
+  analyze(v);
+};
+document.getElementById('pick').onclick=()=>document.getElementById('file').click();
+document.getElementById('file').onchange=uploadFile;
+
+/* ---------- 双图对比：选两张图，异或/相加找隐藏水印 ---------- */
+document.getElementById('cmp').onclick=()=>{
+  document.getElementById('file2').value='';
+  document.getElementById('file2').click();
+};
+document.getElementById('file2').onchange=async e=>{
+  const fs=[...(e.target.files||[])];
+  if(fs.length<2){
+    document.getElementById('status').textContent='要选两张图（按住 Ctrl 多选）';
+    return;
+  }
+  const box=document.getElementById('result');
+  setBusy(true,'正在上传两张图…');
+  box.innerHTML='<div class="card"><div class="bd muted">上传中…</div></div>';
+  try{
+    const fd=new FormData();
+    fd.append('file',fs[0]); fd.append('file',fs[1]);
+    const up=await (await fetch('/api/upload',{method:'POST',body:fd})).json();
+    if(!up.ok||!up.files||up.files.length<2) throw new Error(up.error||'上传失败');
+    setBusy(true,'正在对比…');
+    const r=await (await fetch('/api/imgcmp',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({a:up.files[0],b:up.files[1]})})).json();
+    renderCmp(r,fs);
+  }catch(err){
+    box.innerHTML='<div class="card"><div class="bd it err">'+esc(err.message)+'</div></div>';
+  }
+  setBusy(false,'');
+};
+
+function renderCmp(r,fs){
+  const box=document.getElementById('result');
+  let h='<div class="muted" style="margin:2px 2px 8px">双图对比 · '+
+        esc(fs[0].name)+'  vs  '+esc(fs[1].name)+'</div>';
+  if(!r.ok){
+    h+='<div class="card"><div class="bd it err">出错：'+esc(r.error||'')+'</div></div>';
+    box.innerHTML=h; return;
+  }
+  (r.items||[]).forEach(it=>{
+    h+='<div class="card"><div class="hd"><span class="t">'+esc(it.name)+'</span></div><div class="bd">';
+    h+='<div class="it '+(it.ok?'ok':'warn')+'">'+esc(it.msg||'')+'</div>';
+    (it.previews||[]).forEach(p=>{
+      h+='<div style="margin:8px 0"><div class="muted" style="margin-bottom:4px">'+esc(p.file)+'</div>'+
+         '<img src="'+p.b64+'" style="max-width:100%;border-radius:8px;border:1px solid var(--line)"></div>';
+    });
+    h+='</div></div>';
+  });
+  h+='<div class="card"><div class="bd muted">水印一般在「异或」和「差值增强」里最清楚。'+
+     '两张图尺寸不同会自动缩放对齐。生成的图也存到了上传目录。</div></div>';
+  box.innerHTML=h;
+}
+
+async function uploadFile(){
+  const f=document.getElementById('file').files[0]; if(!f) return;
+  const fd=new FormData(); fd.append('file',f);
+  setBusy(true,'正在上传 '+f.name+'…');
+  try{
+    const r=await (await fetch('/api/upload',{method:'POST',body:fd})).json();
+    if(!r.ok){alert('上传失败：'+r.error);setBusy(false,'');return;}
+    document.getElementById('value').value=r.files[0];
+    analyze(r.files[0]);
+  }catch(e){alert('上传失败：'+e.message);setBusy(false,'');}
+}
+
+// 拖拽上传
+const drop=document.getElementById('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',async e=>{
+  const f=e.dataTransfer.files[0]; if(!f) return;
+  const fd=new FormData(); fd.append('file',f);
+  setBusy(true,'正在上传 '+f.name+'…');
+  const r=await (await fetch('/api/upload',{method:'POST',body:fd})).json();
+  if(!r.ok){alert('上传失败：'+r.error);setBusy(false,'');return;}
+  document.getElementById('value').value=r.files[0];
+  analyze(r.files[0]);
+});
+
+async function loadHist(){
+  try{
+    const r=await (await fetch('/api/history')).json();
+    const box=document.getElementById('hist');
+    if(!r.items.length){box.innerHTML='<span class="muted">还没有记录</span>';return;}
+    box.innerHTML=r.items.slice(0,10).map(it=>
+      '<div class="hitem" data-v="'+esc(it.value)+'" data-p="'+it.panel+'">'+
+      '<div class="m">#'+it.id+' · '+it.t+' · '+it.panel+'</div>'+
+      '<div>'+esc(it.value.slice(0,40))+'</div>'+
+      (it.flags.length?'<div class="f">★ '+esc(it.flags[0])+'</div>':'')+'</div>').join('');
+    box.querySelectorAll('.hitem').forEach(el=>el.onclick=()=>{
+      cur=el.dataset.p; tabs(); phint();
+      document.getElementById('value').value=el.dataset.v; analyze(el.dataset.v);});
+  }catch(e){}
+}
+
+// 有些内嵌浏览器会禁用 confirm()/alert()，点了没反应。
+// 所以这里不用系统弹窗，改成「按钮点两次」确认 + 行内提示。
+function _arm(btn, label, fn){
+  if(btn.dataset.armed === "1"){
+    btn.dataset.armed = "";
+    btn.textContent = label;
+    btn.classList.remove("danger");
+    fn();
+    return;
+  }
+  btn.dataset.armed = "1";
+  btn.dataset.old = btn.textContent;
+  btn.textContent = "再点一次确认";
+  setTimeout(()=>{
+    if(btn.dataset.armed === "1"){
+      btn.dataset.armed = "";
+      btn.textContent = btn.dataset.old || label;
+    }
+  }, 3000);
+}
+
+function _flash(btn, txt, ok){
+  const old = btn.dataset.old || btn.textContent;
+  btn.textContent = txt;
+  btn.classList.add(ok ? "ok" : "danger");
+  setTimeout(()=>{
+    btn.textContent = old;
+    btn.classList.remove("ok");
+  }, 1600);
+}
+
+async function clearHistory(){
+  const b = document.getElementById("clearhist");
+  _arm(b, "清空历史", async ()=>{
+    try{
+      const r = await (await fetch("/api/history/clear", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"
+      })).json();
+      if(r.ok){
+        _flash(b, "已清 " + (r.cleared||0) + " 条", true);
+        loadHist();
+      }else{
+        _flash(b, "失败", false);
+      }
+    }catch(e){
+      _flash(b, "失败", false);
+    }
+  });
+}
+
+async function cleanTemp(){
+  const b = document.getElementById("cleanup");
+  _arm(b, "清临时文件", async ()=>{
+    try{
+      // 先问一下有什么（不删），让用户知道清了什么
+      let n = 0, sz = 0;
+      try{
+        const sc = await (await fetch("/api/cleanup/scan")).json();
+        if(sc.ok){ n = sc.count || 0; sz = sc.size || 0; }
+      }catch(e){}
+      if(n === 0){
+        _flash(b, "没有可清的", true);
+        return;
+      }
+      b.textContent = "清理中…";
+      const r = await (await fetch("/api/cleanup", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({uploads:true})
+      })).json();
+      if(r.ok){
+        _flash(b, "已清 " + (r.removed||0) + " 项", true);
+        const box = document.getElementById("hist");
+        if(box && r.text) box.insertAdjacentHTML("afterbegin",
+          '<div class="muted" style="padding:4px 0">' + esc(r.text) + '</div>');
+      }else{
+        _flash(b, "失败", false);
+      }
+    }catch(e){
+      _flash(b, "失败", false);
+    }
+  });
+}
+
+function exportMd(){
+  if(!lastRes){ _flash(document.getElementById("expmd"), "没有结果", false); return; }
+  const L=[];
+  L.push('# CTF 一把梭 · 分析报告','');
+  L.push('生成时间：'+new Date().toLocaleString());
+  L.push('','**目标**：`'+(lastTarget||'')+'`','');
+  const fl=lastRes.flags||[];
+  if(fl.length){
+    L.push('## ★ 找到的 flag（'+fl.length+' 个）','');
+    fl.forEach(f=>L.push('- `'+f+'`'));
+  } else {
+    L.push('## 没直接命中 flag');
+  }
+  L.push('','## 详细输出','','```');
+  (lastRes.lines||[]).forEach(x=>L.push(x[0]));
+  L.push('```','');
+  try{
+    const blob=new Blob([L.join('\n')],{type:'text/markdown;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='CTF报告_'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'')+'.md';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1000);
+    _flash(document.getElementById("expmd"), "已下载", true);
+  }catch(e){
+    _flash(document.getElementById("expmd"), "下载失败", false);
+  }
+}
+
+async function doSearch(){
+  const q=document.getElementById('q').value.trim(); if(!q) return;
+  const sc=document.getElementById('scope').value;
+  setBusy(true,'搜索中…');
+  const r=await (await fetch('/api/search?q='+encodeURIComponent(q)+'&scope='+sc)).json();
+  let h='<div class="card"><div class="hd"><span class="t">搜索：'+esc(q)+'</span>'+
+        '<span class="hint">'+(r.results.length+r.files.length)+' 条</span></div><div class="bd">';
+  if(!r.results.length && !r.files.length)
+    h+='<div class="muted">没有命中。换个关键词，或把题目文件放进「工作区」目录再搜。</div>';
+  r.results.forEach(x=>{h+='<div class="res"><div class="p">#'+x.id+' · '+esc(x.panel)+' · 命中 '+x.hits+' 行</div>'+
+    '<div class="s">'+esc(x.value.slice(0,80))+'</div><div class="s">'+esc(x.snippet)+'</div>'+
+    (x.flags.length?'<div class="f" style="color:#15803d;font-family:var(--mono)">★ '+x.flags.map(esc).join(' / ')+'</div>':'')+'</div>';});
+  r.files.forEach(f=>{h+='<div class="res"><div class="p">'+esc(f.file)+' <span class="muted">('+f.type+')</span></div>'+
+    (f.flag?'<div style="color:#15803d;font-family:var(--mono)">★ '+esc(f.flag)+'</div>':'')+
+    f.snippets.map(s=>'<div class="s">'+esc(s)+'</div>').join('')+'</div>';});
+  h+='</div></div>';
+  document.getElementById('result').innerHTML=h;
+  const _eb=document.getElementById('expmd');
+  if(_eb) _eb.style.display='inline-block';
+  setBusy(false,'');
+}
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+document.addEventListener('keydown',e=>{
+  if(e.key==='/'&&document.activeElement.id!=='q'){e.preventDefault();document.getElementById('q').focus();}
+  if(e.key==='Enter'&&e.ctrlKey&&document.activeElement.id==='value'){document.getElementById('go').click();}
+});
+// ---- 按钮绑定（逐个兜底：某个函数缺失/报错不影响其它按钮）
+(function(){
+  function bind(id, fn, ev){
+    try{
+      const el = document.getElementById(id);
+      if(!el) return;
+      if(typeof fn !== "function"){
+        console.warn("按钮 " + id + " 的处理函数不存在");
+        return;
+      }
+      el.addEventListener(ev || "click", fn);
+    }catch(e){
+      console.warn("绑定 " + id + " 失败：" + e);
+    }
+  }
+  bind("expmd", typeof exportMd === "function" ? exportMd : null);
+  bind("clearhist", typeof clearHistory === "function" ? clearHistory : null);
+  bind("cleanup", typeof cleanTemp === "function" ? cleanTemp : null);
+  bind("fmtgo", typeof saveFormat === "function" ? saveFormat : null);
+  bind("fmtv", typeof saveFormat === "function"
+       ? (e => { if(e.key === "Enter") saveFormat(); }) : null, "keydown");
+  try{ if(typeof loadFormat === "function") loadFormat(); }catch(e){}
+
+  // 顺便看看有没有可清的临时文件，把数量标在按钮上
+  (async function(){
+    try{
+      const cp = document.getElementById("cleanup");
+      const sc = await (await fetch("/api/cleanup/scan")).json();
+      if(sc.ok && sc.count > 0 && cp){
+        cp.textContent = "清临时文件(" + sc.count + ")";
+        cp.dataset.old = cp.textContent;
+      }
+    }catch(e){}
+  })();
+})();
+
+tabs(); phint(); status(); loadHist();
+</script>
+</body>
+</html>
