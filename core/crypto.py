@@ -3283,8 +3283,54 @@ def analyze(text, max_depth=8):
         return _analyze_uncached(text, max_depth)
 
 
+# 输入长度分级（实测：1000 字符 8.6 秒、5000 字符 10.4 秒、8000 字符 17.6 秒、
+# 20000 字符 28 秒、10 万字符 5 分钟都跑不完）。
+# A* 搜索开销 ≈ 变换数 × 每变换 O(长度) × 搜索节点数，长度一大就爆炸。
+_LEN_REJECT = 200000      # 超过直接拒绝
+_LEN_PEEL_ONLY = 6000     # 超过只做确定性剥离，不做 A* 搜索
+
+
+def _analyze_long(text, max_depth):
+    """大输入降级：只跑 peel（确定性编码剥离），不做 A* 搜索。
+
+    peel 是线性的，实测 10 万字符 2.6 秒；A* 对同样输入要几分钟。
+    返回结构和正常 analyze 一致，上层不用改。
+    """
+    import time as _t
+    t0 = _t.time()
+    n = len(text)
+    peeled, chain, score = text, [], 0.0
+    try:
+        peeled, chain, score = peel(text, min(max_depth, 4))
+    except Exception:
+        pass
+    hits, results = [], []
+    if peeled and peeled != text:
+        desc = " → ".join(chain) if chain else "确定性解码"
+        results.append((desc, peeled, score))
+        for m in re.finditer(r"[A-Za-z][A-Za-z0-9_]{1,19}\{[^}\r\n]{2,}\}", peeled):
+            hits.append((desc, m.group()))
+    notes = [
+        ("输入较长（%d 字符）" % n,
+         "只做了确定性解码（%s），不做 A* 全搜索 —— 要完整搜请分段粘贴" % (
+             " → ".join(chain) if chain else "无进展")),
+    ]
+    return {"hits": hits, "results": results, "layers": len(chain),
+            "evals": 0, "elapsed": _t.time() - t0, "notes": notes}
+
+
 def _analyze_uncached(text, max_depth=8):
     """GUI 调用的入口，保持返回结构不变"""
+    # 长度分级：大输入直接降级，避免用户粘长密文后卡几分钟（三个入口都受益）
+    _n = len(text or "")
+    if _n > _LEN_REJECT:
+        return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0,
+                "notes": [("输入太长（%d 字符）" % _n,
+                           "超过 %d 字符，A* 搜索会跑很久，请分段处理"
+                           % _LEN_REJECT)]}
+    if _n > _LEN_PEEL_ONLY:
+        return _analyze_long(text, max_depth)
+
     # ---- 哈希模式：不可逆，只能校验或爆破
     hv = hash_verify(text)
     if hv:
