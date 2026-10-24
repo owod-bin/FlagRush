@@ -396,6 +396,44 @@ def gif_frame_diff(frame_paths, outdir=None):
 
 
 # ------------------------------------------------------------------ PNG 异常块
+
+def png_fix_crc(data):
+    """重算 PNG 所有块的 CRC，返回 (修复后的 bytes, 修了几处)。
+
+    为什么需要：CTF 常把 PNG 的 IHDR/IDAT CRC 故意改坏，让看图软件和
+    cv2/PIL 都拒渲染，数据就藏在"看起来损坏"的图里。实测这类图
+    `libpng error: IHDR: CRC error` → cv2.imread 返回 None、tesseract 直接退出，
+    后面所有分析（OCR / LSB / 二维码）全部失效。
+
+    PNG 的 CRC 是纯校验，不参与解码，所以重算一遍就能无损修复。
+    """
+    if not data or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return data, 0
+    out = bytearray(data[:8])
+    pos = 8
+    fixed = 0
+    n = len(data)
+    while pos + 8 <= n:
+        ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        typ = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + ln]
+        if len(body) < ln:
+            out += data[pos:]          # 尾部不完整，原样带上
+            return bytes(out), fixed
+        crc_new = zlib.crc32(typ + body) & 0xFFFFFFFF
+        end = pos + 12 + ln
+        crc_old = struct.unpack(">I", data[pos + 8 + ln:end])[0] if end <= n else None
+        out += struct.pack(">I", ln) + typ + body + struct.pack(">I", crc_new)
+        if crc_old is not None and crc_old != crc_new:
+            fixed += 1
+        pos = end
+        if typ == b"IEND":
+            break
+    if pos < n:
+        out += data[pos:]
+    return bytes(out), fixed
+
+
 def png_anomaly(data):
     """PNG 块级体检：CRC 错、块名乱写、块顺序错、多余的私有块。
 

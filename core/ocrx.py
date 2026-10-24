@@ -247,7 +247,16 @@ def ocr_image(path, lang=None, psm=3, retry_scale=2):
             except Exception:
                 continue
         try:
-            txt = pytesseract.image_to_string(im2, lang="+".join(use), config=cfg)
+            # timeout 必须给：tesseract 如果缺 DLL，Windows 会弹「系统错误」模态框，
+            # 进程卡在框上永不返回，pytesseract 就会一直等（用户看到界面卡在「分析中」）。
+            # 60 秒足够识别超大图，超时就报错而不是死等。
+            txt = pytesseract.image_to_string(im2, lang="+".join(use),
+                                              config=cfg, timeout=60)
+        except RuntimeError as e:
+            if scale == 1:
+                return "", ("识别超时（60 秒）—— 可能是 tesseract 缺 DLL 弹了系统错误框：%s"
+                            % str(e)[:60])
+            continue
         except Exception as e:
             if scale == 1:
                 return "", "识别失败：%s" % e

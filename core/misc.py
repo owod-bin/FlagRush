@@ -1081,6 +1081,32 @@ def analyze(path, outdir=None, deep=True, verbose=True):
             f"文件 {human(size)}（大于 {human(MAX_READ)}）：结构分析只取前 {human(head_len)}，"
             f"字符串与 flag 会全文件流式扫描")
 
+    # 0.5) PNG 的 CRC 被改坏？重算一遍（CRC 是纯校验位，不参与解码，修了无损）。
+    #      必须放在所有图像处理之前：cv2.imread / PIL / tesseract 遇到 CRC 错会
+    #      直接拒绝渲染，后面 OCR、LSB、二维码、位平面全都会失效
+    #      （实测用户的 dabai.png 就是这样：libpng error: IHDR: CRC error，
+    #        cv2 返回 None，控制台刷一片 can't open/read file）。
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and not big:
+        try:
+            import stego as _st0
+            _fixed, _nfix = _st0.png_fix_crc(data)
+            if _nfix:
+                _base = os.path.splitext(os.path.basename(path))[0]
+                _dir = outdir or os.path.dirname(os.path.abspath(path))
+                os.makedirs(_dir, exist_ok=True)   # outdir 可能还没建
+                _fp = os.path.join(_dir, _base + "_修复CRC.png")
+                with open(_fp, "wb") as _f:
+                    _f.write(_fixed)
+                rep["warn"].append(
+                    "★ PNG 有 %d 个块的 CRC 被改坏，已重算修复 → %s（后续分析都用这个）"
+                    % (_nfix, os.path.basename(_fp)))
+                data = _fixed
+                path = _fp
+                size = len(data)
+                rep["size"] = size
+        except Exception:
+            pass
+
     k = kind_of(data, path)
     rep["kind"] = k
     p(f"\n[文件] {os.path.basename(path)}   {human(size)}")
