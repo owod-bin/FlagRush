@@ -234,6 +234,47 @@ except ImportError:
     chk("二维码修复（跳过：没装 qrcode）", True)
 
 print()
+print("=== 二进制全编码 flag 扫描（binscan）===")
+import binscan as BS
+import urllib.parse as _up
+_FL = "flag{bin_scan_case}"
+_BS_CASES = [
+    ("原始 ascii", _FL.encode()),
+    ("UTF-16LE", _FL.encode("utf-16-le")),
+    ("UTF-16BE", _FL.encode("utf-16-be")),
+    ("hex 连写", _FL.encode().hex().encode()),
+    ("hex 带空格", " ".join("%02x" % b for b in _FL.encode()).encode()),
+    ("base64", base64.b64encode(_FL.encode())),
+    ("反转 ascii", _FL[::-1].encode()),
+    ("单字节异或 0x5A", bytes(c ^ 0x5A for c in _FL.encode())),
+    ("URL 全编码", "".join("%%%02x" % b for b in _FL.encode()).encode()),
+    ("URL 部分编码", _up.quote(_FL, safe="").encode()),
+    ("GBK 中文", "flag{中文扫描}".encode("gbk")),
+]
+_bs_ok = 0
+for _n, _d in _BS_CASES:
+    _h = BS.scan(_d, deep=True)
+    _got = next((x for x in _h if "flag{" in x[2]), None)
+    if _got:
+        _bs_ok += 1
+    else:
+        print("    MISS: %s -> %s" % (_n, _h[:1]))
+chk("11 种编码形式全检出", _bs_ok == len(_BS_CASES), "%d/%d" % (_bs_ok, len(_BS_CASES)))
+chk("命中带偏移", all(isinstance(x[0], int) for x in BS.scan(_FL.encode())))
+chk("命中带 hexdump 上下文", "00000000" in BS.scan(_FL.encode())[0][3])
+chk("自定义关键词", any("PASSWORD" in x[2] for x in BS.scan(b"...PASSWORD...", keywords=["password"])))
+# 大文件分块
+import tempfile as _tf
+_fd, _fp = _tf.mkstemp(suffix=".bin")
+os.close(_fd)
+with open(_fp, "wb") as _f:
+    _f.write(b"\x00" * (5 * 1024 * 1024))
+    _f.write(b"flag{big_file_tail}")
+    _f.write(b"\x00" * 1024)
+chk("大文件分块扫描", any("big_file_tail" in x[2] for x in BS.scan_file(_fp)))
+os.remove(_fp)
+
+print()
 print("=== 行置换 / Enigma 完整版 ===")
 _bad = 0
 for _k in ("crypto", "key", "secret", "a", "ab"):

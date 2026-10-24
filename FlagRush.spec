@@ -35,6 +35,8 @@ CORE_MODULES = [
     "binx", "hexq", "filemerge",
     # 第六轮：DES/3DES
     "desc",
+    # 第七轮：任意文件二进制全编码扫描
+    "binscan",
 ]
 
 datas = [

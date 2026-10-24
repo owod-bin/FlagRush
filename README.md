@@ -26,6 +26,7 @@
 | **压缩流** | **gzip / zlib / bzip2 / xz / lzma / LZ4**（base64 或 hex 包裹，解出的内部若是压缩文件会继续剥）|
 | **裸二进制** | **LEB128 / varint**、**IEEE754 单双精度**、字节序翻转、位运算（xor/and/or/rol/ror）、进制互转、**字节频率与字符集识别**、01 串的 7 种读法 |
 | **十六进制查询** | hexdump、**按 ascii/hex/utf16/正则搜偏移**、**双文件 hex diff**、任意偏移 magic 识别、提取/ patch |
+| **二进制全编码扫描** | 任意文件在字节层面扫 flag：**ascii / UTF-16LE·BE / hex 连写与带空格 / base64 / 反转 / 单字节异或 0x01-0xFF / URL 全编码与部分编码 / GBK**，给出偏移 + hexdump 上下文，支持自定义关键词和大文件分块 |
 | **文件合并** | **拼接切分**（按 21 种文件签名）、**N 路按块交错还原**、自动探测合并方式、反向合并构造 |
 | **文件隐写增强** | **纯 Python PNG LSB**（不依赖 Pillow）、**PNG 块级体检**（CRC 错/私有块/顺序错）、**ZIP 全局与文件注释**、GIF 帧间差异 |
 | **逆向增强** | **反汇编**（capstone：x86/x86-64/ARM/ARM64/MIPS，自动识别架构、按助记符搜指令）、**Go / Rust 二进制专用字符串**（不以 \x00 结尾，系统 strings 会粘连漏短串）、**ELF 详情**（入口点/节表/动态符号）|
@@ -121,6 +122,7 @@ FlagRush/
 │   ├── cncode.py            # 中文编码（区位码/干支/六十四卦/百家姓/电码/笔画）
 │   ├── binx.py              # 裸二进制（LEB128/IEEE754/字节序/位运算/频率）
 │   ├── hexq.py              # 十六进制查询（hexdump/搜偏移/diff/magic）
+│   ├── binscan.py           # 任意文件二进制全编码 flag 扫描（11 种藏法）
 │   ├── filemerge.py         # 文件合并与拆分（拼接/交错/自动探测）
 │   ├── desc.py              # DES / 3DES（纯 Python，标准向量校验）
 │   ├── quadgram.py          # 英文四元组统计表（单表替换求解用）

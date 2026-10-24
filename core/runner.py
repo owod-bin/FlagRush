@@ -645,12 +645,37 @@ def run(panel, value, timeout=60):
 
 # ------------------------------------------------------------------ 命令行
 def _cli(argv):
-    """命令行入口：python runner.py <文件或文本>  —— 走 ⓪ 一键（自动判类型）"""
+    """命令行入口。
+
+    用法:
+      python runner.py <文件>               一键分析（自动判类型）
+      python runner.py --scan <文件> [关键词...]
+                                            只在二进制层面扫 flag/关键词
+                                            （扫 ascii/UTF-16/hex/base64/反转/URL/GBK/异或）
+    """
     import sys
-    if len(argv) < 2:
+    args = list(argv[1:])
+    if not args:
         print("用法: python runner.py <文件>")
+        print("      python runner.py --scan <文件> [关键词...]")
         return 1
-    target = " ".join(argv[1:]).strip().strip('"')
+    if args[0] in ("--scan", "-s", "scan"):
+        if len(args) < 2:
+            print("用法: python runner.py --scan <文件> [关键词...]")
+            return 1
+        target = args[1].strip().strip('"')
+        kws = [x for x in args[2:] if x]
+        if not os.path.exists(target):
+            print("文件不存在：%s" % target)
+            return 1
+        try:
+            import binscan
+        except Exception as e:
+            print("binscan 不可用：%s" % e)
+            return 1
+        print(binscan.report(target, keywords=kws or None))
+        return 0
+    target = " ".join(args).strip().strip('"')
     if not os.path.exists(target):
         print("文件不存在：%s" % target)
         return 1

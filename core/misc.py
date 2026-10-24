@@ -1494,6 +1494,23 @@ def analyze(path, outdir=None, deep=True, verbose=True):
         except Exception:
             pass
 
+    # 5.4) 二进制全编码扫描：任意文件都在字节层面找 flag
+    # 覆盖 ascii / UTF-16LE/BE / hex 文本 / base64 / 反转 / URL / GBK / 单字节异或，
+    # 这是 find_flags_in 做不到的（它只在原始字节上跑正则，实测 8 种藏法只抓到 1 种）。
+    if size <= 32 * 1024 * 1024 and size >= 16:
+        try:
+            import binscan as _bs
+            _deep = size <= 4 * 1024 * 1024
+            _bh = _bs.scan(data, deep=_deep)
+            for _off, _form, _txt, _ctx in _bh[:12]:
+                rep["extra"].append("二进制扫描 [0x%08x] %s: %s" % (_off, _form, _txt[:120]))
+                _h, _c = find_flags_in(_txt.encode("utf-8", "ignore"))
+                rep["flags"] += [x.decode("utf-8", "ignore") for x in _h]
+                if not _h and ("flag" in _txt.lower() or "ctf" in _txt.lower()):
+                    rep["cands"].append(_txt[:160])
+        except Exception:
+            pass
+
     # 5.5) 文件是不是被合并/拼接/交错过的（CTF「两个文件合在一起」题型）
     if deep and size >= 64:
         try:
