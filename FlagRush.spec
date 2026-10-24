@@ -37,6 +37,8 @@ CORE_MODULES = [
     "desc",
     # 第七轮：任意文件二进制全编码扫描
     "binscan",
+    # 第八轮：十六进制查看器 / X.509 / TLS / OCR
+    "hexview", "x509cert", "tlsx", "ocrx",
 ]
 
 datas = [
@@ -46,6 +48,8 @@ datas = [
     (os.path.join(ROOT, "flag格式.txt"), "."),
     (os.path.join(ROOT, "app.ico"), "."),
     (os.path.join(ROOT, "app_icon_512.png"), "."),
+    # OCR 中文语言包（2.4MB，tessdata_fast 版）；英文包用 tesseract 自带的
+    (os.path.join(ROOT, "tools", "tessdata", "chi_sim.traineddata"), "tools/tessdata"),
 ]
 if os.path.isdir(CORE):
     datas.append((CORE, "core"))
@@ -54,7 +58,8 @@ binaries = []
 hiddenimports = list(CORE_MODULES)
 
 # 这几个包 PyInstaller 自带的 hook 不一定收全，主动 collect 一遍
-for pkg in ("pwn", "capstone", "pyzbar", "gmpy2", "z3", "fitz", "py7zr"):
+for pkg in ("pwn", "capstone", "pyzbar", "gmpy2", "z3", "fitz", "py7zr",
+            "pytesseract"):
     try:
         d, b, h = collect_all(pkg)
         datas += d

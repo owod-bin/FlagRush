@@ -71,6 +71,7 @@ CASES = [
     ("rev", elf, True),
     ("pwn", elf, True),
     ("rsa", RSA_TXT, True),
+    ("hex", png, True),
     ("web", "http://127.0.0.1:9/", False),      # 连不上，要求「不崩」
     ("webscan", "http://127.0.0.1:9/", False),
 ]
@@ -82,6 +83,7 @@ BAD = [
     ("misc", os.path.join(TMP, "不存在.png"), False),
     ("rsa", "这不是 RSA 数据", False),
     ("rev", os.path.join(TMP, "不存在.exe"), False),
+    ("hex", os.path.join(TMP, "不存在.bin"), False),
 ]
 
 ok = 0

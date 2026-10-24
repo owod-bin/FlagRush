@@ -106,6 +106,7 @@ PANELS = [
     ("forensic", "⑤ 取证", "流量包(pcap) 提 URL/提文件；图片看尺寸和 EXIF 隐藏信息", "file"),
     ("pwn", "⑥ Pwn", "一键 checksec、生成溢出 pattern、生成 pwntools 模板", "file"),
     ("rsa", "⑦ RSA", "粘贴 n / e / c（可选 p、dp、第二个 n），自动试 9 种常见 RSA 攻击", "multi"),
+    ("hex", "⑩ 十六进制", "文件：hexdump 看文件头/尾，并列出全文件所有 flag 命中的偏移（要跳偏移/搜关键词用网页版同一个面板）", "file"),
     ("help", "⑨ 使用说明", "每个方向怎么用、先点哪个按钮", "none"),
 ]
 
@@ -423,6 +424,10 @@ class App:
             self.multif.pack_forget()
             self.action.pack_forget()
             self.extra.pack_forget()
+            # 操作行里的按钮也要单独 forget：action 隐藏了但它们自己的 pack 状态还在，
+            # 面板顺序一变（比如 ⑩ 十六进制插到 ⑦ RSA 和 ⑨ 使用说明之间）就会暴露
+            for _b in (self.btn_file, self.btn_go, self.btn_exp, self.btn_folder):
+                _b.pack_forget()
             self.show_help()
             self.status.configure(text="")
         else:
@@ -1053,6 +1058,10 @@ class App:
     def do_pwn(self, path):
         self._panel("pwn", path)
 
+    def do_hex(self, path):
+        """⑩ 十六进制：hexdump 概览 + flag 偏移索引"""
+        self._panel("hex", path)
+
     # ---------------- 说明
     def gen_pattern(self):
         n = simpledialog.askinteger("生成 pattern", "要生成多少字节的 pattern？",
@@ -1228,6 +1237,12 @@ class App:
         H("   小 n 分解 / 费马分解（p、q 接近）/ 小 e 直接开方 / 已知 p 或 q /")
         H("   dp 泄露 / 共模攻击 / 模不互素 / Wiener（d 太小）/ Håstad 广播（e 小、多组 n1/c1）。")
         H("   每条结果都会「回代校验」（重新加密必须等于 c），所以不会给你假答案。")
+        H("")
+        H("⑩ 十六进制 —— 选文件，直接看字节", "h")
+        H("   ★ 文件头 256 字节 + 文件尾 128 字节的 hexdump（偏移 | 16 字节 | ASCII）")
+        H("   ★ 顶部列出全文件所有 flag 命中的偏移和编码形式，直接对着十六进制编辑器找")
+        H("   要「跳到任意偏移 / 搜关键词 / 上下翻屏」，用网页版同一个 ⑩ 面板，")
+        H("   那是可交互的查看器（偏移支持 0x100 / 256 / 1k / 1m 写法）。")
         H("")
         H("⑧ 渗透扫描 —— 给一个 URL，真的去打", "h")
         H("   ★ 会真的发 HTTP 请求（默认上限 300 个），只在你确认过的目标上跑。")

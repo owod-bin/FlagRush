@@ -296,6 +296,7 @@ def main():
         ("forensic", "file", s_pcap, "取证（pcap）"),
         ("pwn", "file", s_elf, "Pwn（ELF）"),
         ("rsa", "multi", "n = 3233\ne = 17\nc = 2790", "RSA（小 n）"),
+        ("hex", "file", s_png, "十六进制（PNG）"),
     ]
 
     for key, mode, val, label in PANEL_INPUT:

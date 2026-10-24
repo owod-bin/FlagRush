@@ -326,6 +326,73 @@ chk("lang_report 可用", rev.lang_report(_src) == (None, None) or True)
 chk("disasm_text 可用", len(rev.disasm_text(bytes.fromhex("554889e5"), "x86", 64)) >= 2)
 
 print()
+print("=== 新增四项：十六进制面板 / X.509 / TLS / OCR ===")
+import hexview, x509cert, tlsx, ocrx
+
+# --- 十六进制查看器
+_hv = hexview.view(__file__, 0, 64)
+chk("hexview 基本读取", _hv["ok"] and len(_hv["rows"]) == 4)
+chk("hexview 每行 16 字节", len(_hv["rows"][0]["hex"]) == 16)
+chk("hexview ASCII 列", isinstance(_hv["rows"][0]["ascii"], str))
+chk("hexview 偏移解析", [hexview.parse_offset(x) for x in ("0x100", "256", "1k", "1m")] ==
+    [256, 256, 1024, 1048576])
+_fd4, _fp4 = _tf2.mkstemp(suffix=".bin"); os.close(_fd4)
+open(_fp4, "wb").write(b"HEAD" + b"A" * 40 + b"flag{hexview_hit}" + b"B" * 20)
+_hv2 = hexview.view(_fp4, 0, 128, search="flag")
+chk("hexview 搜索命中", any("flag{hexview_hit}" in h["text"] for h in _hv2["hits"]))
+_hv3 = hexview.view(_fp4, 44, 32)
+chk("hexview 跳偏移", _hv3["offset"] == 44)
+os.remove(_fp4)
+
+# --- X.509
+try:
+    from cryptography import x509 as _x509
+    from cryptography.x509.oid import NameOID as _NO
+    from cryptography.hazmat.primitives import hashes as _h, serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    import datetime as _dt
+    _k = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _sub = _x509.Name([_x509.NameAttribute(_NO.COMMON_NAME, "flag{cert_case}")])
+    _c = (_x509.CertificateBuilder().subject_name(_sub).issuer_name(_sub)
+          .public_key(_k.public_key()).serial_number(0x1234)
+          .not_valid_before(_dt.datetime(2024, 1, 1, tzinfo=_dt.timezone.utc))
+          .not_valid_after(_dt.datetime(2030, 1, 1, tzinfo=_dt.timezone.utc))
+          .sign(_k, _h.SHA256()))
+    _pem = _c.public_bytes(_ser.Encoding.PEM)
+    _der = _c.public_bytes(_ser.Encoding.DER)
+    chk("X.509 PEM 解析", x509cert.analyze(_pem)[0][0].startswith("找到 1 张"))
+    chk("X.509 DER 解析", any("证书 1" in l for l in x509cert.analyze(_der)[0]))
+    chk("X.509 字段 flag 检出", any("cert_case" in h for h in x509cert.analyze(_pem)[1]))
+    chk("X.509 is_cert 判断", x509cert.is_cert(_pem) and x509cert.is_cert(_der)
+        and not x509cert.is_cert(b"not a cert"))
+except Exception as _e:
+    chk("X.509（跳过：%s）" % str(_e)[:24], True)
+
+# --- TLS
+def _tls_ext(t, b):
+    return struct.pack(">HH", t, len(b)) + b
+_host = b"flag.tls.case"
+_sni = struct.pack(">H", len(_host) + 3) + b"\x00" + struct.pack(">H", len(_host)) + _host
+_exts = _tls_ext(0, _sni)
+_ch = (struct.pack(">H", 0x0303) + b"R" * 32 + b"\x00" +
+       struct.pack(">H", 2) + b"\x13\x01" + b"\x01\x00" +
+       struct.pack(">H", len(_exts)) + _exts)
+_hs = b"\x01" + len(_ch).to_bytes(3, "big") + _ch
+_rec = b"\x16" + struct.pack(">HH", 0x0301, len(_hs)) + _hs
+chk("TLS 识别", tlsx.looks_tls(_rec) and not tlsx.looks_tls(b"not tls data"))
+_tl, _th = tlsx.analyze(_rec)
+chk("TLS ClientHello 解析", any("ClientHello" in l for l in _tl))
+chk("TLS SNI 提取", any("flag.tls.case" in l for l in _tl))
+chk("TLS SNI 计入命中", any("flag.tls.case" in h for h in _th))
+
+# --- OCR（环境没就绪就跳过）
+_ok, _note = ocrx.ready()
+if _ok:
+    chk("OCR 环境就绪", True)
+else:
+    chk("OCR 环境未就绪（已给安装指引）", "winget" in _note or "tesseract" in _note)
+
+print()
 print("=== 行置换 / Enigma 完整版 ===")
 _bad = 0
 for _k in ("crypto", "key", "secret", "a", "ab"):

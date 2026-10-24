@@ -1515,6 +1515,49 @@ def analyze(path, outdir=None, deep=True, verbose=True):
         except Exception:
             pass
 
+    # 5.39) OCR：图片里如果有文字（截图题、图上写 flag），识别出来
+    # 只在图片且 OCR 环境就绪时跑（tesseract 是外部程序，没装就跳过）
+    if data[:8] == b"\x89PNG\r\n\x1a\n" or data[:2] in (b"\xff\xd8", b"BM") \
+            or data[:6] in (b"GIF87a", b"GIF89a"):
+        try:
+            import ocrx as _ocr
+            if _ocr.ready()[0]:
+                _ol, _oh = _ocr.analyze(path)
+                if _oh or len(_ol) > 2:
+                    rep["extra"].append("★ OCR 文字识别：")
+                    rep["extra"] += ["  " + x for x in _ol[:25]]
+                    rep["flags"] += _oh
+        except Exception:
+            pass
+
+    # 5.37) X.509 证书解析（CTF 常把 flag 写进 CN / SAN / 自定义扩展）
+    try:
+        import x509cert as _x5
+        if _x5.is_cert(data):
+            _xl, _xh = _x5.analyze(data)
+            rep["extra"].append("★ X.509 证书：")
+            rep["extra"] += ["  " + x for x in _xl[:30]]
+            rep["flags"] += _xh
+    except Exception:
+        pass
+
+    # 5.38) TLS 记录流解析（SNI / 证书链 / 明文应用数据）
+    try:
+        import tlsx as _tx
+        _tl, _th = (None, None)
+        if _tx.looks_tls(data):
+            _tl, _th = _tx.analyze(data)
+        elif data[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4") or \
+                data[:4] == b"\x0a\x0d\x0d\x0a":
+            # pcap / pcapng：提取 TCP 载荷里的 TLS
+            _tl, _th = _tx.from_pcap(path)
+        if _tl:
+            rep["extra"].append("★ TLS 解析：")
+            rep["extra"] += ["  " + x for x in _tl[:40]]
+            rep["flags"] += (_th or [])
+    except Exception:
+        pass
+
     # 5.36) 文本文件像 DCT 系数？重建图像（2026 DesCTF 新题型）
     # 触发条件收紧：非二进制、数字个数 >= 256 且是 64 的倍数，避免对普通文件做无用功
     if size < 8 * 1024 * 1024 and not big and size >= 512:

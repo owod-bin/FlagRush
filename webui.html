@@ -169,7 +169,8 @@ const PANELS=[
  ["webscan","⑧ 渗透扫描","文本：给 URL，真发请求找源码泄露/注入/弱口令并提 flag"],
  ["forensic","⑤ 取证","文件：pcap 提文件、图片 EXIF"],
  ["pwn","⑥ Pwn","文件：checksec、偏移计算"],
- ["rsa","⑦ RSA","文本：n/e/c 九种攻击（含 Håstad）"]
+ ["rsa","⑦ RSA","文本：n/e/c 九种攻击（含 Håstad）"],
+ ["hex","⑩ 十六进制","文件：hexdump 查看器 —— 跳偏移、搜关键词、上下翻屏"]
 ];
 const TEXT=["crypto","web","webscan","rsa"];
 let cur="auto", busy=false, lastRes=null, lastTarget="";
@@ -206,6 +207,77 @@ async function saveFormat(){
   }
 }
 
+/* ---------- 十六进制查看器 ---------- */
+let hexState={file:'',off:0,len:512,q:''};
+async function hexLoad(file,off,q){
+  if(!file){document.getElementById('result').innerHTML=
+    '<div class="card"><div class="bd it err">先选一个文件（拖进来或填完整路径）</div></div>';return;}
+  hexState.file=file; hexState.off=off||0; hexState.q=q||'';
+  const res=document.getElementById('result');
+  res.innerHTML='<div class="card"><div class="bd muted">读取中…</div></div>';
+  try{
+    const u='/api/hex?f='+encodeURIComponent(hexState.file)
+      +'&off='+encodeURIComponent(hexState.off)
+      +'&len='+hexState.len
+      +'&q='+encodeURIComponent(hexState.q);
+    const d=await (await fetch(u)).json();
+    renderHex(d);
+  }catch(e){
+    res.innerHTML='<div class="card"><div class="bd it err">读取失败：'+esc(e.message)+'</div></div>';
+  }
+}
+function renderHex(d){
+  const box=document.getElementById('result');
+  if(!d.ok){box.innerHTML='<div class="card"><div class="bd it err">'+esc(d.error||'读取失败')+'</div></div>';return;}
+  const pad=n=>n.toString(16).toUpperCase().padStart(8,'0');
+  let h='<div class="card"><div class="hd">'+esc(d.file)+' · '+esc(d.human_size||'')
+    +' · 偏移 0x'+d.offset.toString(16).toUpperCase()+'</div><div class="bd">';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">';
+  h+='<input id="hexoff" placeholder="偏移 0x100" value="0x'+d.offset.toString(16)+'" '
+    +'style="width:110px;padding:5px 8px;border:1px solid var(--line,#d6dbe3);border-radius:6px;font:12.5px var(--mono)">';
+  h+='<input id="hexq" placeholder="搜关键词 / hex" value="'+esc(hexState.q)+'" '
+    +'style="width:150px;padding:5px 8px;border:1px solid var(--line,#d6dbe3);border-radius:6px;font:12.5px var(--mono)">';
+  h+='<button class="ghost mini" onclick="hexGo(-1)">◀ 上一屏</button>';
+  h+='<button class="ghost mini" onclick="hexGo(1)">下一屏 ▶</button>';
+  h+='<button class="ghost mini" onclick="hexJump()">跳转 / 搜索</button>';
+  h+='<span class="muted" style="font-size:12px">共 '+(d.total_lines||0)+' 行（每行 16 字节）</span>';
+  h+='</div>';
+  if(d.hits&&d.hits.length){
+    h+='<div class="sub" style="margin:4px 0 6px">搜索命中 '+d.hits.length+' 处（点偏移跳过去）</div>';
+    h+='<div style="max-height:130px;overflow:auto;margin-bottom:10px">';
+    d.hits.forEach(function(x){
+      h+='<div style="font-size:12.5px"><a href="javascript:void(0)" onclick="hexJumpTo('+x.offset+')" '
+        +'style="color:#2563eb;font-family:var(--mono)">0x'+pad(x.offset)+'</a> '
+        +'<span class="muted">['+esc(x.form)+']</span> '+esc(x.text||'')+'</div>';
+    });
+    h+='</div>';
+  }
+  h+='<pre style="font:12.5px/1.55 var(--mono);overflow:auto;margin:0;white-space:pre">';
+  d.rows.forEach(function(r){
+    h+='<span style="color:#94a3b8">'+pad(r.addr)+'</span>  '
+      +r.hex.join(' ')+'  <span style="color:#0f766e">|'+esc(r.ascii)+'|</span>\n';
+  });
+  h+='</pre></div></div>';
+  box.innerHTML=h;
+}
+function hexGo(dir){
+  const n=Math.max(0,hexState.off+dir*hexState.len);
+  hexLoad(hexState.file,n,hexState.q);
+}
+function hexJump(){
+  const o=(document.getElementById('hexoff')||{}).value||'0';
+  const q=(document.getElementById('hexq')||{}).value||'';
+  hexLoad(hexState.file,parseOffsetText(o),q.trim());
+}
+function hexJumpTo(off){ hexLoad(hexState.file,off,hexState.q); }
+function parseOffsetText(s){
+  const t=String(s||'').trim().toLowerCase().replace(/_/g,'');
+  if(!t) return 0;
+  if(t.indexOf('0x')===0) return parseInt(t.slice(2),16)||0;
+  if(t.endsWith('k')) return (parseInt(t)||0)*1024;
+  if(t.endsWith('m')) return (parseInt(t)||0)*1048576;
+  return parseInt(t,10)||0;
+}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function tabs(){
   const box=document.getElementById('tabs'); box.innerHTML='';
@@ -232,6 +304,7 @@ function setBusy(b,msg){busy=b;document.getElementById('go').disabled=b;
   document.getElementById('status').textContent=msg||'';}
 
 async function analyze(value){
+  if(cur==='hex'){ return hexLoad(String(value).replace(/^["']+|["']+$/g,''),0,''); }
   setBusy(true,'正在跑引擎…');
   const res=document.getElementById('result');
   res.innerHTML='<div class="card"><div class="bd muted">分析中，大文件可能要几秒…</div></div>';

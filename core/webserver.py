@@ -279,6 +279,22 @@ class Handler(BaseHTTPRequestHandler):
                 items = [{k: h[k] for k in ("id", "t", "panel", "value", "flags", "nline")}
                          for h in HISTORY]
             return self._send_json({"ok": True, "items": items[::-1]})
+        if path == "/api/hex":
+            # 十六进制查看器：/api/hex?f=<路径>&off=<偏移>&len=<长度>&q=<搜索>
+            # 单独开接口而不是塞进 /api/analyze，因为它是「交互式翻页」，
+            # 每次只取一屏（默认 512 字节），不该重跑整个分析引擎。
+            try:
+                import hexview
+            except Exception as e:
+                return self._send_json({"ok": False, "error": "hexview 不可用：%s" % e})
+            f = (qs.get("f") or [""])[0]
+            off = hexview.parse_offset((qs.get("off") or ["0"])[0])
+            try:
+                ln = int((qs.get("len") or ["512"])[0])
+            except Exception:
+                ln = 512
+            q = (qs.get("q") or [""])[0].strip()
+            return self._send_json(hexview.view(f, off, ln, q or None))
         if path == "/api/search":
             q = (qs.get("q") or [""])[0].strip()
             scope = (qs.get("scope") or ["results"])[0]

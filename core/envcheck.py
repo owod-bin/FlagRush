@@ -24,6 +24,7 @@ DEPS = [
     ("z3", "z3-solver", "opt", "约束求解 / 部分逆向题"),
     ("pwn", "pwntools", "opt", "Pwn 面板的 checksec、libc 识别"),
     ("capstone", "capstone", "opt", "反汇编（反汇编功能会用到）"),
+    ("pytesseract", "pytesseract", "opt", "OCR 文字识别（还需 tesseract 二进制）"),
     ("py7zr", "py7zr", "opt", "7z 解压（没有就用 tools/7zip 的 exe）"),
     ("rarfile", "rarfile", "opt", "rar 解压"),
     ("fitz", "pymupdf", "opt", "PDF 结构分析"),

@@ -557,6 +557,51 @@ def _auto_tips(path, head):
     return tips
 
 
+def _lines_hex(path):
+    """⑩ 十六进制：文件头/尾 hexdump + 全文件 flag 偏移索引。
+
+    GUI 是「选文件点运行」的线性交互，所以这里给一份「看得到的概览」：
+    文件头 256 字节、文件尾 128 字节、以及全文件里所有 flag 命中的偏移。
+    想跳任意偏移/搜关键词，用网页版的交互查看器（同一个 hexview 模块）。
+    """
+    import hexview
+    lines, flags = [], []
+    v = hexview.view(path, 0, 256)
+    if not v.get("ok"):
+        return [("读取失败：" + v.get("error", ""), "err")], []
+    lines.append(("文件：%s    %s" % (v["file"], v.get("human_size", "")), "ok"))
+    lines.append(("共 %d 字节 / %d 行（每行 16 字节）" % (v["size"], v["total_lines"]), "muted"))
+    lines.append(("", ""))
+
+    # 全文件扫一遍，把 flag 命中的偏移列出来（点不点得过去看界面，但偏移本身有用）
+    try:
+        import binscan
+        hits = binscan.scan_file(path, deep=v["size"] <= 4 * 1024 * 1024, chain_depth=3)
+    except Exception:
+        hits = []
+    if hits:
+        lines.append(("★ 发现 %d 处命中（偏移 + 编码形式）：" % len(hits), "ok"))
+        for off, form, txt, _ctx in hits[:24]:
+            lines.append(("  0x%08X  [%s]  %s" % (off, form, txt[:100]), "flag"))
+            flags.append(txt)
+        lines.append(("", ""))
+
+    lines.append(("== 文件头 256 字节 ==", "h"))
+    for r in v["rows"]:
+        lines.append(("%08x  %-47s  |%s|" % (r["addr"], " ".join(r["hex"]), r["ascii"]), "mono"))
+
+    if v["size"] > 256:
+        lines.append(("", ""))
+        lines.append(("== 文件尾 128 字节 ==", "h"))
+        v2 = hexview.view(path, max(0, v["size"] - 128), 128)
+        for r in v2["rows"]:
+            lines.append(("%08x  %-47s  |%s|" % (r["addr"], " ".join(r["hex"]), r["ascii"]), "mono"))
+
+    lines.append(("", ""))
+    lines.append(("提示：想跳到任意偏移、搜关键词、上下翻屏，用网页版「⑩ 十六进制」面板", "muted"))
+    return lines, flags
+
+
 PANEL_FNS = {
     "auto": _lines_auto,
     "misc": _lines_misc,
@@ -567,6 +612,7 @@ PANEL_FNS = {
     "forensic": _lines_forensic,
     "pwn": _lines_pwn,
     "rsa": _lines_rsa,
+    "hex": _lines_hex,
 }
 
 TEXT_PANELS = {"crypto", "web", "webscan", "rsa"}
