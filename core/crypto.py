@@ -2279,6 +2279,7 @@ def _decompress_any(raw):
         ("bzip2", lambda d: bz2.decompress(d)),
         ("xz", lambda d: lzma.decompress(d)),
         ("lzma-alone", lambda d: lzma.decompress(d, format=lzma.FORMAT_ALONE)),
+        ("lz4", lambda d: lz4_decompress_any(d)),
     ]
     for name, fn in tries:
         try:
@@ -2374,6 +2375,130 @@ def _t_des(s):
     return out
 
 
+# ==================== 藏头诗 / 每行取字 ====================
+def _t_acrostic(s):
+    """藏头/藏尾：每行取第 N 个字拼起来。
+
+    CTF misc 送分题：给一首诗或一段多行文本，每行第一个字连读是 flag。
+    也会藏在中段（每行第 2/3/4 字）或尾部，所以都试一遍。
+    """
+    lines = [l.strip() for l in s.splitlines() if l.strip()]
+    if len(lines) < 3 or len(s) > 20000:
+        return []
+    out = []
+    # 中文/通用：每行第 N 个字符
+    for pos in range(0, 4):
+        picked = [l[pos] for l in lines if len(l) > pos]
+        txt = "".join(picked)
+        if len(txt) >= 3 and txt != s:
+            out.append(("每行第 %d 字" % (pos + 1), txt))
+    # 每行倒数第 N 个
+    for pos in range(1, 3):
+        picked = [l[-pos] for l in lines if len(l) >= pos]
+        txt = "".join(picked)
+        if len(txt) >= 3 and txt != s:
+            out.append(("每行倒数第 %d 字" % pos, txt))
+    # 英文：每行首字母
+    if all(re.match(r"[A-Za-z]", l) for l in lines[:5]):
+        txt = "".join(l[0] for l in lines)
+        if len(txt) >= 3:
+            out.append(("每行首字母", txt))
+    return out
+
+
+# ==================== LZ4 解压 ====================
+# LZ4 块格式：token(1B) = 高 4 位 literal 长度 + 低 4 位 match 长度；
+# 长度 >= 15 时后续字节累加（255 表示继续）。literal 之后是 2 字节小端 offset，
+# match 长度要 +4（minmatch）。块格式很简单，纯 Python 几十行搞定。
+def lz4_block_decompress(src):
+    """解压 LZ4 块格式（不带 frame 头）"""
+    dst = bytearray()
+    i = 0
+    n = len(src)
+    while i < n:
+        token = src[i]
+        i += 1
+        lit_len = token >> 4
+        if lit_len == 15:
+            while i < n:
+                b = src[i]
+                i += 1
+                lit_len += b
+                if b != 255:
+                    break
+        if i + lit_len > n:
+            break
+        dst += src[i:i + lit_len]
+        i += lit_len
+        if i + 2 > n:
+            break
+        offset = src[i] | (src[i + 1] << 8)
+        i += 2
+        if offset == 0 or offset > len(dst):
+            break
+        match_len = token & 0x0F
+        if match_len == 15:
+            while i < n:
+                b = src[i]
+                i += 1
+                match_len += b
+                if b != 255:
+                    break
+        match_len += 4
+        start = len(dst) - offset
+        for k in range(match_len):
+            dst.append(dst[start + k])
+    return bytes(dst)
+
+
+def lz4_frame_decompress(data):
+    """解压 LZ4 frame 格式（magic 04 22 4D 18）"""
+    if data[:4] != b"\x04\x22\x4d\x18":
+        return b""
+    out = bytearray()
+    i = 4
+    n = len(data)
+    while i + 4 <= n:
+        flg = data[i]
+        i += 1
+        bd = data[i]
+        i += 1
+        # 可选字段：content size(8) / dict id(4)，看 FLG 的 bit
+        if flg & 0x08:
+            i += 8
+        if flg & 0x01:
+            i += 4
+        i += 1                     # header checksum
+        # 跳过内容校验
+        block_checksum = bool(flg & 0x10)
+        while i + 4 <= n:
+            bsize = int.from_bytes(data[i:i + 4], "little")
+            i += 4
+            if bsize == 0:         # EndMark
+                return bytes(out)
+            uncompressed = bool(bsize & 0x80000000)
+            bsize &= 0x7FFFFFFF
+            if i + bsize > n:
+                return bytes(out)
+            chunk = data[i:i + bsize]
+            i += bsize
+            if block_checksum:
+                i += 4
+            if uncompressed:
+                out += chunk
+            else:
+                out += lz4_block_decompress(chunk)
+        break
+    return bytes(out)
+
+
+def lz4_decompress_any(data):
+    """自动判断块/frame 格式"""
+    if data[:4] == b"\x04\x22\x4d\x18":
+        return lz4_frame_decompress(data)
+    return lz4_block_decompress(data)
+
+
 DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_url, _t_b16, _t_b64, _t_b32, _t_b85, _t_b58, _t_b62, _t_b36, _t_b45, _t_b91,
        _t_uu, _t_unicode, _t_html, _t_qp, _t_morse, _t_binary, _t_octal, _t_dec,
@@ -2381,7 +2506,7 @@ DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
        _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
        _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode, _t_compress,
-       _t_des]
+       _t_des, _t_acrostic]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
 def _t_utf7(s):

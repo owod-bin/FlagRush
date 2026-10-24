@@ -919,6 +919,229 @@ def lsb_text(path, max_bits=3_000_000, min_run=6):
     return results[:12]
 
 
+
+# ==================== Zigzag 扫描 + 逆 DCT 重建 ====================
+# 2026 新题型（DesCTF）：题目把图片的 DCT 系数按 Zigzag 顺序展开成一维数组，
+# 让你按 Zigzag 填回 8x8 矩阵再逆 DCT 重建图像。
+# 我们已有 jpeg_dct_coeffs（自然序），这里补上「重排」和「重建」两块。
+
+# 标准 JPEG Zigzag 顺序：第 i 个 zigzag 位置对应自然序（8x8 光栅）的哪个下标
+ZIGZAG = [
+    0, 1, 8, 16, 9, 2, 3, 10,
+    17, 24, 32, 25, 18, 11, 4, 5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13, 6, 7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
+]
+ZIGZAG_INV = [0] * 64
+for _i, _p in enumerate(ZIGZAG):
+    ZIGZAG_INV[_p] = _i
+
+# 预计算 IDCT 的余弦表和归一化系数（避免每个像素都算 cos，快 10 倍以上）
+import math as _math
+_COS = [[_math.cos((2 * x + 1) * u * _math.pi / 16) for u in range(8)]
+        for x in range(8)]
+_CU = [1.0 / _math.sqrt(2) if u == 0 else 1.0 for u in range(8)]
+
+
+def zigzag_scan(block64):
+    """自然序 64 个系数 -> Zigzag 序 64 个"""
+    return [block64[i] for i in ZIGZAG]
+
+
+def zigzag_unscan(arr64):
+    """Zigzag 序 64 个 -> 自然序 64 个"""
+    out = [0] * 64
+    for i, pos in enumerate(ZIGZAG):
+        if i < len(arr64):
+            out[pos] = arr64[i]
+    return out
+
+
+def idct_8x8(coeffs64):
+    """自然序 64 个 DCT 系数 -> 8x8 像素（0~255，已加 128 偏移）"""
+    out = []
+    for y in range(8):
+        row = []
+        cy = _COS[y]
+        for x in range(8):
+            cx = _COS[x]
+            s = 0.0
+            for v in range(8):
+                cv = _CU[v] * cy[v]
+                base = v * 8
+                for u in range(8):
+                    s += _CU[u] * cv * coeffs64[base + u] * cx[u]
+            v = int(round(s / 4.0 + 128))
+            row.append(0 if v < 0 else (255 if v > 255 else v))
+        out.append(row)
+    return out
+
+
+def dct_8x8(pixels8):
+    """8x8 像素 -> 自然序 64 个 DCT 系数（正向，用来验证/自己构造题）"""
+    out = [0.0] * 64
+    for v in range(8):
+        for u in range(8):
+            s = 0.0
+            for y in range(8):
+                for x in range(8):
+                    s += ((pixels8[y][x] - 128) * _COS[x][u] * _COS[y][v])
+            out[v * 8 + u] = 0.25 * _CU[u] * _CU[v] * s
+    return out
+
+
+def rebuild_image_from_coeffs(coeffs, width, height, zigzag=True,
+                              out_path=None, gray=True):
+    """从一维系数数组重建图像。
+
+    coeffs: 一维列表，按块顺序排列（每块 64 个）
+    width/height: 图像宽高（必须是 8 的倍数，不够会补）
+    zigzag: 系数是否按 Zigzag 序给（题目最常见）
+    """
+    if not coeffs:
+        return False, [], "没有系数"
+    # 兼容两种输入：扁平一维数组，或「每块一个 64 元素列表」的二维结构
+    # （jpeg_dct_coeffs 返回的就是后者）
+    if coeffs and isinstance(coeffs[0], (list, tuple)):
+        flat = []
+        for blk in coeffs:
+            flat.extend(blk[:64])
+        coeffs = flat
+    bw = (width + 7) // 8
+    bh = (height + 7) // 8
+    need = bw * bh * 64
+    if len(coeffs) < need:
+        return False, [], "系数不够：需要 %d 个，只给了 %d" % (need, len(coeffs))
+    # 先重建灰度块
+    canvas = [[128] * (bw * 8) for _ in range(bh * 8)]
+    for by in range(bh):
+        for bx in range(bw):
+            base = (by * bw + bx) * 64
+            blk = coeffs[base:base + 64]
+            nat = zigzag_unscan(blk) if zigzag else list(blk)
+            px = idct_8x8(nat)
+            for y in range(8):
+                row = canvas[by * 8 + y]
+                for x in range(8):
+                    row[bx * 8 + x] = px[y][x]
+    rows = []
+    for y in range(height):
+        r = canvas[y][:width]
+        if gray:
+            line = bytearray()
+            for v in r:
+                line += bytes([v, v, v])
+            rows.append(bytes(line))
+        else:
+            rows.append(bytes(r))
+    if out_path is None:
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "_dct_rebuild.png")
+    out_path = os.path.abspath(out_path)
+    try:
+        import stego as _st
+        _st.write_png(out_path, width, height, rows)
+    except Exception as e:
+        return False, [], "写 PNG 失败：%s" % e
+    return True, [out_path], "%dx%d（%dx%d 块，%s序）" % (
+        width, height, bw, bh, "Zigzag" if zigzag else "自然")
+
+
+def parse_coeff_list(text, limit=200000):
+    """把题目给的系数文本解析成数字列表（支持空格/逗号/换行/括号）"""
+    t = re.sub(r"[^0-9eE+\-.]+", " ", text or "")
+    out = []
+    for tok in t.split():
+        try:
+            v = float(tok) if ("." in tok or "e" in tok.lower()) else int(tok)
+        except Exception:
+            continue
+        out.append(v)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def guess_dct_params(coeffs, sizes=None):
+    """猜「这串数字是不是 DCT 系数」以及可能的图像尺寸。
+
+    判断依据：
+      - 数量是 64 的倍数（8x8 块）
+      - 数值范围在 DCT 系数量级（DC 系数可能几百，AC 系数通常 |x| < 100）
+    返回 [(宽, 高, 置信度, 说明)]
+    """
+    n = len(coeffs)
+    if n < 64 or n % 64:
+        return []
+    blocks = n // 64
+    cands = []
+    # 常见尺寸：正方形优先，其次 16:9 / 4:3
+    if sizes is None:
+        sizes = []
+        r = int(round(blocks ** 0.5))
+        if r * r == blocks:
+            sizes.append((r * 8, r * 8))
+        for bw in range(1, min(blocks, 256) + 1):
+            if blocks % bw == 0:
+                bh = blocks // bw
+                if 1 <= bh <= 256:
+                    sizes.append((bw * 8, bh * 8))
+        # 去重并排序：正方形优先、块数小的优先
+        seen = set()
+        uniq = []
+        for w, h in sizes:
+            k = (w, h)
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append((w, h, abs(w - h)))
+        uniq.sort(key=lambda x: (x[2], x[0] * x[1]))
+        sizes = [(w, h) for w, h, _ in uniq[:12]]
+    mx = max(abs(x) for x in coeffs) if coeffs else 0
+    conf = 0.5
+    if mx < 2048:
+        conf += 0.3
+    if n >= 64 * 4:
+        conf += 0.1
+    for w, h in sizes:
+        cands.append((w, h, min(conf, 0.95), "系数 %d 个 = %d 块" % (n, blocks)))
+    return cands
+
+
+def dct_rebuild_variants(text, outdir=None):
+    """一把梭：从系数文本自动猜尺寸，Zigzag/自然序都试，落地图片。
+
+    返回 (成功?, 文件列表, 说明)
+    """
+    coeffs = parse_coeff_list(text)
+    if len(coeffs) < 64:
+        return False, [], "解析出的数字太少（%d 个）" % len(coeffs)
+    params = guess_dct_params(coeffs)
+    if not params:
+        return False, [], "数字个数不是 64 的倍数（%d），不像 DCT 系数" % len(coeffs)
+    outdir = outdir or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "_dct_out")
+    os.makedirs(outdir, exist_ok=True)
+    files = []
+    descs = []
+    # 只试前 4 种尺寸 × 2 种序，避免爆炸
+    for idx, (w, h, conf, note) in enumerate(params[:4]):
+        for zz in (True, False):
+            fn = os.path.join(outdir, "rebuild_%dx%d_%s.png" % (
+                w, h, "zz" if zz else "nat"))
+            ok, fs, desc = rebuild_image_from_coeffs(coeffs, w, h, zigzag=zz,
+                                                     out_path=fn)
+            if ok:
+                files.append(fs[0])
+                descs.append("%s %s" % (desc, "Zigzag" if zz else "自然序"))
+    if not files:
+        return False, [], "重建失败"
+    return True, files, "生成 %d 张：%s" % (len(files), "、".join(descs[:6]))
+
 def analyze_image(path, outdir=None, want=None):
     """
     图片进阶总入口。want 可指定只跑某几项：

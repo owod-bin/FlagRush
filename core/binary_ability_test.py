@@ -3,6 +3,8 @@
 import sys, os, struct, gzip, zlib, base64, zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/core")
 import binx, hexq, filemerge, stego as S, rev, mediax as M, classic as C, desc as D
+import imgadv
+import crypto as crypto_mod
 
 ok = tot = 0
 def chk(name, cond, extra=""):
@@ -182,6 +184,54 @@ _elf = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8 + _s2.pack("<H", 0x3E)
 chk("架构自动识别 x86-64", rev.detect_arch(_elf) == ("x86", 64))
 chk("find_insn 找 call", len(rev.find_insn(bytes.fromhex("554889e5e8ffffffffc3"),
                                             r"call", "x86", 64)) >= 1)
+
+print()
+print("=== P0 新增：藏头诗 / LZ4 / Zigzag+IDCT / 二维码修复 ===")
+# 藏头诗
+_poem = "红掌拨清波\n旗开得胜时\n中藏玄机处\n风急天高猿"
+_acro = [t for n, t in crypto_mod._t_acrostic(_poem) if n == "每行第 1 字"]
+chk("藏头（每行第 1 字）", _acro and _acro[0] == "红旗中风", str(_acro))
+
+# LZ4 块格式（全 literal 的合法块）
+def _lz4_lit(data):
+    n = len(data)
+    if n < 15:
+        return bytes([n << 4]) + data
+    return bytes([0xF0]) + bytes([n - 15]) + data
+for _m in (b"hello", b"flag{lz4_block_test}"):
+    chk("LZ4 块解压 %s" % _m[:12].decode(), crypto_mod.lz4_block_decompress(_lz4_lit(_m)) == _m)
+
+# Zigzag + IDCT
+chk("Zigzag 表完整", len(set(imgadv.ZIGZAG)) == 64)
+chk("Zigzag 逆表一致", all(imgadv.ZIGZAG_INV[imgadv.ZIGZAG[i]] == i for i in range(64)))
+_px = [[(x * 16 + y * 4) % 256 for x in range(8)] for y in range(8)]
+_co = imgadv.dct_8x8(_px)
+chk("Zigzag 往返", imgadv.zigzag_unscan(imgadv.zigzag_scan(_co)) == _co)
+_back = imgadv.idct_8x8(_co)
+chk("DCT 正向->逆向往返", max(abs(_back[y][x] - _px[y][x])
+                              for y in range(8) for x in range(8)) <= 1)
+chk("系数个数识别", len(imgadv.guess_dct_params([0] * 1024)) > 0)
+
+# 二维码修复
+try:
+    import qrcode as _q
+    _qr = _q.QRCode(version=2, box_size=8, border=4)
+    _qr.add_data("flag{qr_repair_case}")
+    _qr.make(fit=False)
+    _img = _qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    _p = _img.load()
+    for _y in range(0, min(_img.size[1], 88)):
+        for _x in range(0, min(_img.size[0], 88)):
+            _p[_x, _y] = (0, 0, 0)
+    _img.save("_qr_t.png")
+    _before = M.qr_decode("_qr_t.png").get("texts") or []
+    _r = M.qr_repair("_qr_t.png", out_path="_qr_t_fix.png")
+    chk("二维码破坏后解不出", not _before)
+    chk("二维码修复后解出", "flag{qr_repair_case}" in (_r["after"] or []), _r["note"][:40])
+    os.path.exists("_qr_t.png") and os.remove("_qr_t.png")
+    os.path.exists("_qr_t_fix.png") and os.remove("_qr_t_fix.png")
+except ImportError:
+    chk("二维码修复（跳过：没装 qrcode）", True)
 
 print()
 print("=== 行置换 / Enigma 完整版 ===")
