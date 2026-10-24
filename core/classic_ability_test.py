@@ -230,6 +230,31 @@ add("区位码", "5448463618664252", [])
 add("天干地支", "\u7532\u5b50\u4e59\u4e11\u4e19\u5bc5", [])
 add("六十四卦", "111111000000111000000111", [])
 add("百家姓", "\u8d75\u94b1\u5b59\u674e", [])
+# ---------- 20. Ook! / Brainfuck（esolang）----------
+# 这两条是回归用的：Ook! 的映射表最早把 + - > < 写错了，
+# 导致标准 Ook! 密文解出来全是 \x00，只有「按错表生成的密文」能解对。
+_OOK = {"+": "Ook. Ook.", "-": "Ook! Ook!", ">": "Ook. Ook?", "<": "Ook? Ook.",
+        ".": "Ook! Ook.", ",": "Ook. Ook!", "[": "Ook! Ook?", "]": "Ook? Ook!"}
+
+
+def _bf_print(txt):
+    """生成一段「逐字符打印」的 Brainfuck 程序"""
+    cur = 0
+    out = []
+    for ch in txt:
+        d = ord(ch) - cur
+        out.append("+" * d if d > 0 else "-" * (-d))
+        out.append(".")
+        cur = ord(ch)
+    return "".join(out)
+
+
+_OOK_TXT = " ".join(_OOK[c] for c in _bf_print("flag{ook}") if c in _OOK)
+add("Ook!", _OOK_TXT, [])
+add("Ook!（小写）", _OOK_TXT.lower(), [])
+add("Ook!（连写无空格）", _OOK_TXT.replace(" ", ""), [])
+add("Brainfuck", _bf_print("flag{brainfuck}"), [])
+
 add("中文电码", "0022 0947 0032", [])
 add("笔画码", "1121 121 251", [])
 

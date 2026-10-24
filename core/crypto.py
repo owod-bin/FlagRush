@@ -1467,14 +1467,29 @@ def _t_brainfuck(s):
 
 
 def _t_ook(s):
-    if "Ook" not in s and "ook" not in s:
+    """Ook! 语言（Brainfuck 的换皮，把 8 个指令换成 Ook 加标点的组合）。
+
+    映射按官方规范（esolangs.org/wiki/Ook!）：
+        Ook. Ook.  = +        Ook! Ook!  = -
+        Ook. Ook?  = >        Ook? Ook.  = <
+        Ook! Ook.  = .        Ook. Ook!  = ,
+        Ook! Ook?  = [        Ook? Ook!  = ]
+
+    踩过的坑：这张表最早把前四个写错了（+ - > < 全串位），
+    结果只有「按错表生成的密文」能解出东西，拿真实题目的标准 Ook!
+    解出来全是 \x00（实测 'flag{ook}' 的密文解出 9 个空字符）。
+    """
+    if not re.search(r"(?i)ook", s):
         return []
-    t = re.sub(r"\s+", " ", s)
-    pairs = re.findall(r"(Ook[.!?]) (Ook[.!?])", t)
+    # 大小写归一：OOK / ook / Ook 都见过
+    t = re.sub(r"(?i)ook", "Ook", s)
+    # token 之间允许没有空格（Ook.Ook. 这种连写）
+    pairs = re.findall(r"(Ook[.!?])\s*(Ook[.!?])", t)
     if len(pairs) < 4:
         return []
-    m = {("Ook.", "Ook?"): "+", ("Ook?", "Ook."): "-", ("Ook.", "Ook."): ">",
-         ("Ook!", "Ook!"): "<", ("Ook!", "Ook."): ".", ("Ook.", "Ook!"): ",",
+    m = {("Ook.", "Ook."): "+", ("Ook!", "Ook!"): "-",
+         ("Ook.", "Ook?"): ">", ("Ook?", "Ook."): "<",
+         ("Ook!", "Ook."): ".", ("Ook.", "Ook!"): ",",
          ("Ook!", "Ook?"): "[", ("Ook?", "Ook!"): "]"}
     bf = "".join(m.get(p, "") for p in pairs)
     if not bf:
