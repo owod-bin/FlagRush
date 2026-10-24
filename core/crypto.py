@@ -2089,6 +2089,8 @@ except Exception:
 
 # 当前题目给的密钥（由 solve() 从 `key=xxx` 那一行解析出来）
 _CURRENT_KEY = None
+# 当前题目给的 nonce（ChaCha20 / Salsa20 用，由 `nonce=xxx` 那一行解析出来）
+_CURRENT_NONCE = None
 # 当前题目给的 crib（已知明文前缀，由 `crib=flag{` 那一行解析出来）
 # 作用对标 Ciphey 的 -r：① 硬过滤结果 ② 反推 XOR 密钥 ③ 排序加成
 _CURRENT_CRIB = None
@@ -2215,7 +2217,7 @@ def _t_classic(s):
     if not classic or len(s) > 20000:
         return []
     try:
-        return classic.decode_all(s, _CURRENT_KEY)
+        return classic.decode_all(s, _CURRENT_KEY, _CURRENT_NONCE)
     except Exception:
         return []
 
@@ -2594,14 +2596,24 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
         return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0}
 
     # 从输入里抠出密钥：`key=xxx` / `密钥：xxx` 单独占一行（Playfair、RC4、AES 用）
-    global _CURRENT_KEY, _CURRENT_CRIB
+    global _CURRENT_KEY, _CURRENT_CRIB, _CURRENT_NONCE
     _CURRENT_KEY = None
     _CURRENT_CRIB = None
+    _CURRENT_NONCE = None
     m = re.search(r"(?:^|[\r\n])\s*(?:key|密钥|k)\s*[=:：]\s*(\S+)\s*$",
                   text, re.I | re.M)
     if m:
         _CURRENT_KEY = m.group(1).strip().strip("'\"")
         text = (text[:m.start()] + text[m.end():]).strip()
+        if not text:
+            return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0}
+
+    # 从输入里抠出 nonce：`nonce=xxx`（ChaCha20 / Salsa20 用）
+    mn = re.search(r"(?:^|[\r\n])\s*(?:nonce|iv)\s*[=:：]\s*(\S+)\s*$",
+                   text, re.I | re.M)
+    if mn:
+        _CURRENT_NONCE = mn.group(1).strip().strip("'\"")
+        text = (text[:mn.start()] + text[mn.end():]).strip()
         if not text:
             return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0}
 

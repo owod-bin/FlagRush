@@ -259,6 +259,17 @@ add("行置换", _C.row_transposition_enc("meetatnoon", "crypto") + "\nkey=crypt
 _DK = bytes.fromhex("133457799BBCDFF1")
 add("DES", _D.des_encrypt(b"flag{des_ability}", _DK).hex() + "\nkey=" + _DK.hex(), [])
 add("3DES", _D.triples_des_encrypt(b"flag{triples_ability}", _DK).hex() + "\nkey=" + _DK.hex(), [])
+add("Blowfish", _C.blowfish_encode("flag{blowfish_ability}", _DK.hex()) + "\nkey=" + _DK.hex(), [])
+_CK = bytes(range(32))
+_CN = bytes(range(8))
+try:
+    from Crypto.Cipher import ChaCha20 as _CC, Salsa20 as _SS
+    add("ChaCha20", _CC.new(key=_CK, nonce=_CN).encrypt(b"flag{chacha_ability}").hex()
+        + "\nkey=" + _CK.hex() + "\nnonce=" + _CN.hex(), [])
+    add("Salsa20", _SS.new(key=_CK, nonce=_CN).encrypt(b"flag{salsa_ability}").hex()
+        + "\nkey=" + _CK.hex() + "\nnonce=" + _CN.hex(), [])
+except Exception:
+    pass
 
 
 def main():

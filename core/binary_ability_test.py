@@ -169,6 +169,21 @@ chk("DES 补零不截断", D.des_decrypt(D.des_encrypt(b"flag{pad21bytes!!}", _D
     .startswith(b"flag{pad21bytes!!}"))
 
 print()
+print("=== 反汇编（capstone）===")
+_rows = rev.disasm(bytes.fromhex("554889e54883ec10"), "x86", 64)
+chk("x86-64 push rbp", _rows and _rows[0][2] == "push" and "rbp" in _rows[0][3],
+    str(_rows[:1]))
+chk("x86-64 mov rbp,rsp", len(_rows) >= 2 and _rows[1][2] == "mov")
+chk("x86-64 sub rsp,0x10", len(_rows) >= 3 and _rows[2][2] == "sub")
+_arows = rev.disasm(bytes.fromhex("0000a0e3"), "arm", 32)
+chk("ARM mov r0,#0", _arows and _arows[0][2] == "mov")
+import struct as _s2
+_elf = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8 + _s2.pack("<H", 0x3E)
+chk("架构自动识别 x86-64", rev.detect_arch(_elf) == ("x86", 64))
+chk("find_insn 找 call", len(rev.find_insn(bytes.fromhex("554889e5e8ffffffffc3"),
+                                            r"call", "x86", 64)) >= 1)
+
+print()
 print("=== 行置换 / Enigma 完整版 ===")
 _bad = 0
 for _k in ("crypto", "key", "secret", "a", "ab"):

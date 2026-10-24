@@ -1222,6 +1222,103 @@ def _dynstr_name(data, secs, stroff, e):
     return None
 
 
+# ==================== 反汇编（capstone） ====================
+# capstone 一直装在包里但从来没被调用过 —— 逆向题第一件事就是看汇编，
+# 这里补上。自动识别架构（ELF e_machine / PE Machine），也允许手动指定。
+
+_ELF_MACHINE = {
+    0x03: ("x86", 32), 0x3E: ("x86", 64), 0x28: ("arm", 32),
+    0xB7: ("arm64", 64), 0x08: ("mips", 32), 0x14: ("mips", 32),
+}
+_PE_MACHINE = {
+    0x014C: ("x86", 32), 0x8664: ("x86", 64), 0x01C0: ("arm", 32),
+    0x01C4: ("arm", 32), 0xAA64: ("arm64", 64),
+}
+
+
+def detect_arch(data):
+    """从 ELF / PE 头识别架构，返回 (arch, bits)"""
+    try:
+        if data[:4] == b"\x7fELF" and len(data) > 20:
+            m = struct.unpack_from("<H", data, 18)[0] if data[5] == 1 \
+                else struct.unpack_from(">H", data, 18)[0]
+            if m in _ELF_MACHINE:
+                return _ELF_MACHINE[m]
+        if data[:2] == b"MZ" and len(data) > 0x40:
+            pe = struct.unpack_from("<I", data, 0x3C)[0]
+            if pe + 6 < len(data) and data[pe:pe + 4] == b"PE\x00\x00":
+                m = struct.unpack_from("<H", data, pe + 4)[0]
+                if m in _PE_MACHINE:
+                    return _PE_MACHINE[m]
+    except Exception:
+        pass
+    return ("x86", 64)
+
+
+def disasm(data, arch=None, bits=None, offset=0, count=60, base=0x400000):
+    """反汇编一段字节，返回 [(地址, 字节, 助记符, 操作数)]。
+
+    arch: x86 / arm / arm64 / mips，不给就从文件头自动识别
+    offset: 从哪个文件偏移开始
+    count: 最多反汇编多少条指令
+    base:   虚拟地址基数（只影响显示）
+    """
+    try:
+        import capstone
+    except Exception:
+        return []
+    if arch is None or bits is None:
+        a, b = detect_arch(data)
+        arch = arch or a
+        bits = bits or b
+    amap = {
+        "x86": (capstone.CS_ARCH_X86, capstone.CS_MODE_64 if bits == 64 else capstone.CS_MODE_32),
+        "arm": (capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM),
+        "arm64": (getattr(capstone, "CS_ARCH_AARCH64", capstone.CS_ARCH_ARM),
+                  getattr(capstone, "CS_MODE_ARM", 0)),
+        "mips": (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS32),
+    }
+    if arch not in amap:
+        return []
+    try:
+        md = capstone.Cs(amap[arch][0], amap[arch][1])
+        md.detail = False
+    except Exception:
+        return []
+    blob = data[offset:offset + count * 16]
+    out = []
+    for ins in md.disasm(blob, base + offset):
+        out.append((ins.address, ins.bytes.hex(), ins.mnemonic, ins.op_str))
+        if len(out) >= count:
+            break
+    return out
+
+
+def disasm_text(data, arch=None, bits=None, offset=0, count=60, base=0x400000):
+    """反汇编成文本（objdump 风格），给报告直接用"""
+    rows = disasm(data, arch, bits, offset, count, base)
+    if not rows:
+        return []
+    lines = ["反汇编（%s%s）：" % (arch or detect_arch(data)[0],
+                                bits or detect_arch(data)[1])]
+    for addr, byt, mn, op in rows:
+        lines.append("  %08x  %-20s  %-8s %s" % (addr, byt, mn, op))
+    return lines
+
+
+def find_insn(data, pattern, arch=None, bits=None, offset=0, max_scan=20000):
+    """在反汇编里找助记符/操作数匹配的指令（找 cmp / call / strcmp 之类）"""
+    import re
+    pat = re.compile(pattern, re.I)
+    hits = []
+    for addr, byt, mn, op in disasm(data, arch, bits, offset, max_scan):
+        if pat.search(mn) or pat.search(op):
+            hits.append((addr, mn, op))
+            if len(hits) >= 50:
+                break
+    return hits
+
+
 def analyze(path):
     rep = {"title": os.path.basename(path), "lines": [], "warn": [], "hits": [],
            "suggest": []}

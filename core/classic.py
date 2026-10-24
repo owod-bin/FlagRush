@@ -1433,6 +1433,145 @@ def enigma_decode_full(text, key, plugboard=None, rings=None, order=None, reflec
     return [("Enigma M3（%s / %s%s）" % (" ".join(order), k[0:3], extra), r)]
 
 
+# ==================== 现代分组/流密码（Blowfish / ChaCha20 / Salsa20） ====================
+# pycryptodome 早就装在包里，但之前只用了 AES 和 RC4。
+# Blowfish 和 ChaCha20 在 CTF 现代密码里出现频率不低，且不需要额外依赖。
+
+def _key_bytes(spec, want=None):
+    """把密钥/Nonce 字符串归一化成 bytes。
+
+    规则：看起来像 hex（长度偶数且全是 hex 字符）就按 hex 解；
+    否则按 utf-8 编码。长度不对时用 md5/sha256 派生（并在结果名里标注）。
+    """
+    if isinstance(spec, (bytes, bytearray)):
+        return bytes(spec), False
+    t = (spec or "").strip().strip("'\"")
+    b = None
+    if t and len(t) % 2 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", t):
+        try:
+            b = bytes.fromhex(t)
+        except Exception:
+            b = None
+    if b is None:
+        b = t.encode("utf-8", "ignore")
+    if want and len(b) != want:
+        import hashlib
+        if want == 32:
+            return hashlib.sha256(b).digest(), True
+        if want == 16:
+            return hashlib.md5(b).digest(), True
+        if want == 8:
+            return hashlib.md5(b).digest()[:8], True
+    return b, False
+
+
+def _hex_bytes(s):
+    t = re.sub(r"[^0-9A-Fa-f]", "", s or "")
+    if len(t) < 16 or len(t) % 2:
+        return b""
+    try:
+        return bytes.fromhex(t)
+    except Exception:
+        return b""
+
+
+def blowfish_decode(text, key):
+    """Blowfish（ECB，8 字节分组）：密文 hex + 密钥"""
+    try:
+        from Crypto.Cipher import Blowfish
+    except Exception:
+        return []
+    ct = _hex_bytes(text)
+    if len(ct) < 8 or len(ct) % 8:
+        return []
+    k, derived = _key_bytes(key)
+    if not (4 <= len(k) <= 56):
+        return []
+    try:
+        pt = Blowfish.new(k, Blowfish.MODE_ECB).decrypt(ct)
+    except Exception:
+        return []
+    if not pt:
+        return []
+    txt = pt.rstrip(b"\x00").decode("utf-8", "ignore")
+    if not txt or sum(1 for c in txt if 32 <= ord(c) < 127) / max(len(txt), 1) < 0.6:
+        return []
+    return [("Blowfish（key=%s%s）" % (key, " 已派生" if derived else ""), txt)]
+
+
+def blowfish_encode(text, key):
+    try:
+        from Crypto.Cipher import Blowfish
+    except Exception:
+        return ""
+    k, _ = _key_bytes(key)
+    data = (text or "").encode("utf-8")
+    data += b"\x00" * ((-len(data)) % 8)
+    return Blowfish.new(k, Blowfish.MODE_ECB).encrypt(data).hex()
+
+
+def chacha20_decode(text, key, nonce=None):
+    """ChaCha20 流密码：密文 hex + 32 字节密钥 + nonce"""
+    try:
+        from Crypto.Cipher import ChaCha20
+    except Exception:
+        return []
+    ct = _hex_bytes(text)
+    if len(ct) < 4:
+        return []
+    k, kd = _key_bytes(key, want=32)
+    if len(k) != 32:
+        return []
+    out = []
+    # nonce 支持 8 / 12 / 24 字节三种（ChaCha20 原始 / IETF / XChaCha）
+    nonces = []
+    if nonce:
+        nb, _ = _key_bytes(nonce)
+        if len(nb) in (8, 12, 24):
+            nonces.append(nb)
+    if not nonces:
+        nonces = [b"\x00" * 8, b"\x00" * 12]
+    for nb in nonces:
+        try:
+            pt = ChaCha20.new(key=k, nonce=nb).decrypt(ct)
+        except Exception:
+            continue
+        txt = pt.decode("utf-8", "ignore")
+        if txt and sum(1 for c in txt if 32 <= ord(c) < 127) / max(len(txt), 1) > 0.6:
+            out.append(("ChaCha20（nonce=%s%s）" % (
+                nb.hex(), " 密钥已派生" if kd else ""), txt))
+    return out
+
+
+def salsa20_decode(text, key, nonce=None):
+    """Salsa20 流密码：密钥 16 或 32 字节，nonce 8 字节"""
+    try:
+        from Crypto.Cipher import Salsa20
+    except Exception:
+        return []
+    ct = _hex_bytes(text)
+    if len(ct) < 4:
+        return []
+    out = []
+    for want in (32, 16):
+        k, kd = _key_bytes(key, want=want)
+        if len(k) != want:
+            continue
+        nb = b"\x00" * 8
+        if nonce:
+            t, _ = _key_bytes(nonce)
+            if len(t) == 8:
+                nb = t
+        try:
+            pt = Salsa20.new(key=k, nonce=nb).decrypt(ct)
+        except Exception:
+            continue
+        txt = pt.decode("utf-8", "ignore")
+        if txt and sum(1 for c in txt if 32 <= ord(c) < 127) / max(len(txt), 1) > 0.6:
+            out.append(("Salsa20（%d 字节密钥%s）" % (want, " 已派生" if kd else ""), txt))
+    return out
+
+
 KEYED = [
     ("维吉尼亚", vigenere_decode),
     ("Playfair", playfair_decode),
@@ -1451,11 +1590,19 @@ KEYED = [
     ("Enigma", enigma_decode),
     ("Enigma完整版", enigma_decode_full),
     ("行置换", row_transposition_dec),
+    ("Blowfish", blowfish_decode),
+    ("ChaCha20", chacha20_decode),
+    ("Salsa20", salsa20_decode),
 ]
 
 
-def decode_all(text, key=None):
-    """返回 [(名称, 明文)]，key 为 None 时只跑无密钥的那些"""
+def decode_all(text, key=None, nonce=None):
+    """返回 [(名称, 明文)]，key 为 None 时只跑无密钥的那些。
+
+    nonce 只有 ChaCha20/Salsa20 用得到；用 inspect 判断函数签名，
+    避免给不接受的函数传多余参数。
+    """
+    import inspect
     out = []
     for name, fn in KEYLESS:
         try:
@@ -1465,7 +1612,14 @@ def decode_all(text, key=None):
     if key:
         for name, fn in KEYED:
             try:
-                out += fn(text, key)
+                try:
+                    nargs = len(inspect.signature(fn).parameters)
+                except Exception:
+                    nargs = 2
+                if nargs >= 3:
+                    out += fn(text, key, nonce)
+                else:
+                    out += fn(text, key)
             except Exception:
                 continue
         try:
