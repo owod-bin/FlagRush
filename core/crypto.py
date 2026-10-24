@@ -2499,6 +2499,25 @@ def lz4_decompress_any(data):
     return lz4_block_decompress(data)
 
 
+def _t_binx(s):
+    """裸二进制的多种读法（binx.analyze_binary）。
+
+    _t_binary 只做「8 位一字节」这一种；这里补上：
+    7 位一字符、整串反序、字节内位反序、按位取反、+1/+7/+0x20/+0x55 偏移、
+    hex 按 16/32/64 位整数读码点（大小端）、f32/f64 浮点、LEB128、八进制、十进制。
+    """
+    if len(s) > 200000:
+        return []
+    try:
+        import binx
+    except Exception:
+        return []
+    try:
+        return binx.analyze_binary(s, max_out=10)
+    except Exception:
+        return []
+
+
 DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_url, _t_b16, _t_b64, _t_b32, _t_b85, _t_b58, _t_b62, _t_b36, _t_b45, _t_b91,
        _t_uu, _t_unicode, _t_html, _t_qp, _t_morse, _t_binary, _t_octal, _t_dec,
@@ -2506,7 +2525,7 @@ DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
        _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
        _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode, _t_compress,
-       _t_des, _t_acrostic]
+       _t_des, _t_acrostic, _t_binx]
 
 # 有歧义的变换：需要试参数（位移几、几栏、什么密钥），靠打分挑
 def _t_utf7(s):

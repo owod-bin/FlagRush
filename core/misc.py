@@ -1446,6 +1446,13 @@ def analyze(path, outdir=None, deep=True, verbose=True):
             if ok:
                 rep["extra"].append(f"★ GIF 已拆成 {len(files)} 帧："
                                     + ", ".join(os.path.basename(f) for f in files[:8]))
+                # 帧间差异：CTF 常把数据藏在「只有第 N 帧不同」的像素里
+                try:
+                    dok, dfiles, dnote = stego.gif_frame_diff(files, outdir)
+                    if dok and dnote:
+                        rep["extra"].append("★ GIF 帧间差异：" + dnote)
+                except Exception:
+                    pass
                 for f in files:
                     try:
                         if os.path.getsize(f) > 8 * 1024 * 1024:
@@ -1491,6 +1498,39 @@ def analyze(path, outdir=None, deep=True, verbose=True):
                 rep["extra"].append("    用：bkcrack -C \"" + os.path.basename(path) +
                                     f"\" -c \"{enc[0]}\" -p 原始文件")
                 rep["extra"].append("    本包已内置 bkcrack（tools\\bkcrack\\bkcrack.exe），跑完会直接给出密钥")
+        except Exception:
+            pass
+
+    # 5.35) 十六进制概览：文件头 hexdump + flag 命中位置的上下文
+    # hexq 模块之前只被 filemerge 用，用户在界面上根本看不到 hexdump —— 补上。
+    if size >= 16:
+        try:
+            import hexq as _hq
+            _head = _hq.hexdump(data, 0, min(64, len(data)))
+            rep["extra"].append("文件头十六进制：\n" + _head)
+            # 文件尾也要看（CTF 常在尾部附加数据）
+            if len(data) > 128:
+                rep["extra"].append("文件尾十六进制：\n" + _hq.hexdump(
+                    data, max(0, len(data) - 64), 64))
+        except Exception:
+            pass
+
+    # 5.36) 文本文件像 DCT 系数？重建图像（2026 DesCTF 新题型）
+    # 触发条件收紧：非二进制、数字个数 >= 256 且是 64 的倍数，避免对普通文件做无用功
+    if size < 8 * 1024 * 1024 and not big and size >= 512:
+        try:
+            _txt = data.decode("utf-8", "ignore")
+            _nums = re.findall(r"-?\d+(?:\.\d+)?", _txt)
+            if len(_nums) >= 256 and len(_nums) % 64 == 0:
+                # 数字占全文的比例要高（纯系数文件），避免误判日志之类
+                if sum(len(x) for x in _nums) / max(len(_txt), 1) > 0.5:
+                    import imgadv as _ia
+                    _dok, _dfs, _ddesc = _ia.dct_rebuild_variants(
+                        _txt, os.path.join(outdir or os.path.dirname(os.path.abspath(path)), "_dct"))
+                    if _dok:
+                        rep["extra"].append("★ DCT 系数重建图像：" + _ddesc)
+                        rep["notes"].append("检测到 %d 个数字（64 的倍数），像 JPEG DCT 系数，"
+                                            "已按 Zigzag/自然序各重建一遍，见 _dct 目录" % len(_nums))
         except Exception:
             pass
 

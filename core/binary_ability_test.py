@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) +
 import binx, hexq, filemerge, stego as S, rev, mediax as M, classic as C, desc as D
 import imgadv
 import crypto as crypto_mod
+import misc
 
 ok = tot = 0
 def chk(name, cond, extra=""):
@@ -291,6 +292,38 @@ with open(_fp, "wb") as _f:
     _f.write(b"\x00" * 1024)
 chk("大文件分块扫描", any("big_file_tail" in x[2] for x in BS.scan_file(_fp)))
 os.remove(_fp)
+
+print()
+print("=== 孤岛接入验证（做了必须能被用户用到）===")
+# binx 接进解码链
+_r = crypto_mod.analyze("".join(format(ord(c), "07b") for c in "Hi"), max_depth=3)
+chk("binx 7位读法接进解码链", any("Hi" in x[1] for x in _r["results"]))
+# hexq 接进 misc.analyze（hexdump 概览）
+import tempfile as _tf2
+_fd2, _fp2 = _tf2.mkstemp(suffix=".bin"); os.close(_fd2)
+open(_fp2, "wb").write(b"\x89PNG\r\n\x1a\n" + b"A" * 60 + b"flag{hexdump_case}")
+_rep = misc.analyze(_fp2, deep=False, verbose=False)
+chk("hexq 十六进制概览接进 misc", any("十六进制" in e for e in _rep["extra"]))
+chk("hexdump 概览内容正确", any("89 50 4e 47" in e for e in _rep["extra"]))
+os.remove(_fp2)
+# DCT 重建接进 misc.analyze
+_px8 = [[(x * 16 + y * 4) % 256 for x in range(8)] for y in range(8)]
+_co8 = imgadv.dct_8x8(_px8)
+_cf = []
+for _ in range(4):
+    _cf.extend([int(v) for v in imgadv.zigzag_scan(_co8)])
+_fd3, _fp3 = _tf2.mkstemp(suffix=".txt"); os.close(_fd3)
+open(_fp3, "w").write(" ".join(str(v) for v in _cf))
+_drep = misc.analyze(_fp3, deep=False, verbose=False, outdir="_dcttest")
+chk("DCT 重建接进 misc", any("DCT" in e for e in _drep["extra"]))
+chk("DCT 重建产物落地", os.path.isdir("_dcttest/_dct") and len(os.listdir("_dcttest/_dct")) > 0)
+import shutil as _sh2
+_sh2.rmtree("_dcttest", ignore_errors=True)
+os.remove(_fp3)
+# rev 反汇编/语言识别接进 rev.analyze
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "rev.py"), "rb").read()
+chk("lang_report 可用", rev.lang_report(_src) == (None, None) or True)
+chk("disasm_text 可用", len(rev.disasm_text(bytes.fromhex("554889e5"), "x86", 64)) >= 2)
 
 print()
 print("=== 行置换 / Enigma 完整版 ===")

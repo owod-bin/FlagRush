@@ -1619,6 +1619,102 @@ def analyze(path):
     except Exception:
         pass
 
+    # ---- 语言识别（Go / Rust）：这两类二进制的字符串不以 \x00 结尾，
+    # 系统 strings 会粘连短串或整条漏掉，必须用专用提取
+    try:
+        lang, note = lang_report(data)
+        if lang:
+            L.append("")
+            L.append("== 编译语言：%s ==" % lang)
+            L.append("  " + note)
+            if lang.startswith("Go"):
+                gs = go_strings(data, minlen=3, limit=400)
+            else:
+                gs = rust_strings(data, minlen=3, limit=400)
+            # 只报「像题目线索」的串，避免刷屏
+            keys = [x for x in gs if re.search(
+                r"flag|ctf|key|pass|secret|correct|wrong|input|success|fail",
+                x[1], re.I)]
+            if keys:
+                L.append("  可疑字符串（%d 条，前 20）：" % len(keys))
+                for off, t in keys[:20]:
+                    L.append("    0x%08X  %s" % (off, t[:100]))
+                    h, _ = find_flags_in(t.encode("utf-8", "ignore"))
+                    rep["hits"] += [x.decode("utf-8", "ignore") for x in h]
+            elif gs:
+                L.append("  字符串共 %d 条，前 10：" % len(gs))
+                for off, t in gs[:10]:
+                    L.append("    0x%08X  %s" % (off, t[:100]))
+    except Exception:
+        pass
+
+    # ---- 反汇编（capstone）：ELF/PE 的 .text 段开头看几条指令
+    # 之前只写了 disasm 函数没接进来，用户在界面上看不到汇编
+    if (pe or elf) and len(data) > 1024:
+        try:
+            arch, bits = detect_arch(data)
+            # 找 .text / 代码段起点：ELF 用节表，PE 用入口点
+            start = None
+            if elf:
+                import struct as _st
+                e = "<" if data[5] == 1 else ">"
+                is64 = data[4] == 2
+                if is64:
+                    sh_off = _st.unpack_from(e + "Q", data, 40)[0]
+                    sh_ent, sh_num = _st.unpack_from(e + "HH", data, 58)
+                    shstr_i = _st.unpack_from(e + "H", data, 62)[0]
+                else:
+                    sh_off = _st.unpack_from(e + "I", data, 32)[0]
+                    sh_ent, sh_num = _st.unpack_from(e + "HH", data, 46)
+                    shstr_i = _st.unpack_from(e + "H", data, 50)[0]
+                # 直接找第一个可执行的节
+                for i in range(min(sh_num, 64)):
+                    q = sh_off + i * sh_ent
+                    if q + sh_ent > len(data):
+                        break
+                    if is64:
+                        flags = _st.unpack_from(e + "Q", data, q + 8)[0]
+                        off = _st.unpack_from(e + "Q", data, q + 24)[0]
+                    else:
+                        flags = _st.unpack_from(e + "I", data, q + 8)[0]
+                        off = _st.unpack_from(e + "I", data, q + 16)[0]
+                    if flags & 0x4:      # SHF_EXECINSTR
+                        start = off
+                        break
+            elif pe:
+                import struct as _st
+                pe_off = _st.unpack_from("<I", data, 0x3C)[0]
+                opt = pe_off + 24
+                magic = _st.unpack_from("<H", data, opt)[0]
+                entry_rva = _st.unpack_from("<I", data, opt + 16)[0]
+                # 用节表把 RVA 转文件偏移
+                nsec = _st.unpack_from("<H", data, pe_off + 6)[0]
+                sec_off = opt + _st.unpack_from("<H", data, pe_off + 20)[0]
+                for i in range(min(nsec, 32)):
+                    q = sec_off + i * 40
+                    if q + 40 > len(data):
+                        break
+                    va = _st.unpack_from("<I", data, q + 12)[0]
+                    vsize = _st.unpack_from("<I", data, q + 8)[0]
+                    raw = _st.unpack_from("<I", data, q + 20)[0]
+                    if va <= entry_rva < va + max(vsize, 1):
+                        start = raw + (entry_rva - va)
+                        break
+            if start is not None and 0 <= start < len(data):
+                L.append("")
+                L.append("== 反汇编（入口/代码段开头，%s%d）==" % (arch, bits))
+                for line in disasm_text(data, arch, bits, start, count=24, base=0x400000):
+                    L.append("  " + line)
+                # 找关键指令
+                key_ins = find_insn(data, r"call|jmp|strcmp|memcmp|scanf|printf",
+                                    arch, bits, start, max_scan=300)
+                if key_ins:
+                    L.append("  关键调用（前 8）：")
+                    for a, mn, op in key_ins[:8]:
+                        L.append("    0x%08X  %s %s" % (a, mn, op))
+        except Exception:
+            pass
+
     # 高熵块
     n = len(data)
     if n > 4096:
