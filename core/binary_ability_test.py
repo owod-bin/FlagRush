@@ -393,6 +393,23 @@ else:
     chk("OCR 环境未就绪（已给安装指引）", "winget" in _note or "tesseract" in _note)
 
 print()
+print("=== binscan 性能回归（历史退化点）===")
+# 大量 UTF-16 命中是最容易退化的场景：以前 _real_offset 对每个命中做全文件
+# data.find()，15.8MB 的 exe 要 131 秒。这里造 1 万个 UTF-16 命中压一压。
+import time as _tm
+_txt = "".join("flag{perf_%05d} padding text here. " % i for i in range(2000))
+_big = _txt.encode("utf-16-le") * 5
+_big += b"\x00" * (2 * 1024 * 1024)
+_t0 = _tm.time()
+_ph = BS.scan(_big, deep=False, chain=True)
+_pdt = _tm.time() - _t0
+chk("2.5MB/1 万命中的扫描 < 8 秒", _pdt < 8.0, "%.2f 秒" % _pdt)
+chk("性能场景仍能命中", len(_ph) > 0)
+# 偏移准确性（粘连前缀要跟着挪）
+_g = b"X" * 40 + b"flag{glued_offset}" + b"Y" * 10
+chk("粘连前缀偏移准确", BS.scan(_g, deep=False, chain=False)[0][0] == 40)
+
+print()
 print("=== 行置换 / Enigma 完整版 ===")
 _bad = 0
 for _k in ("crypto", "key", "secret", "a", "ab"):

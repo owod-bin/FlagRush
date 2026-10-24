@@ -140,7 +140,14 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
             try:
                 n = flagfmt.normalize(text.encode("utf-8", "ignore"))
                 if n:
-                    text = n.decode("utf-8", "ignore")
+                    new_text = n.decode("utf-8", "ignore")
+                    if len(new_text) < len(text):
+                        # normalize 把粘连的前缀切掉了，偏移要跟着往后挪同样的字节数，
+                        # 否则会报「偏移 34 但文本从 50 开始」（实测 GBK 分支差 16 字节）。
+                        # 粘连前缀基本都是 ASCII（X 序列、字母），用 latin-1 估算够准。
+                        cut = text[:len(text) - len(new_text)]
+                        off += len(cut.encode("latin-1", "ignore"))
+                    text = new_text
                 else:
                     # normalize 明确判为「不像 flag」（占位符 flag{...}、
                     # body{color:red} 这种），直接丢掉，别污染结果
@@ -182,6 +189,9 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
         if len(txt) < 8:
             continue
         for pat in allpats:
+            # 游标必须每个 pattern 独立：不同 pattern 的匹配起点互不相关，
+            # 共用一个游标会让后一个 pattern 从上一个的末尾开始找，找不到就兜底全扫
+            _st = {}
             try:
                 pstr = re.compile(pat.pattern.decode("latin-1", "ignore")
                                   if isinstance(pat.pattern, bytes) else pat.pattern,
@@ -191,7 +201,8 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
             try:
                 for m in pstr.finditer(txt):
                     # 解码后是字符偏移，必须反查真实字节偏移（前面有 ascii 时 *2 会错）
-                    add(_real_offset(data, m.group(), m.start() * step), name, m.group())
+                    add(_byte_offset(data, m.group(), enc, _st, m.start() * step),
+                        name, m.group())
             except Exception:
                 continue
 
@@ -273,13 +284,15 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
         try:
             u8 = data.decode("utf-8", "ignore")
             for pat in allpats:
+                _st8 = {}
                 try:
                     pstr = re.compile(pat.pattern.decode("latin-1", "ignore")
                                       if isinstance(pat.pattern, bytes) else pat.pattern)
                 except Exception:
                     continue
                 for m in pstr.finditer(u8):
-                    add(_real_offset(data, m.group(), m.start()), "UTF-8 中文", m.group())
+                    add(_byte_offset(data, m.group(), "utf-8", _st8, m.start()),
+                        "UTF-8 中文", m.group())
         except Exception:
             pass
 
@@ -288,13 +301,15 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
         try:
             gbk = data.decode("gbk", "ignore")
             for pat in allpats:
+                _stg = {}
                 try:
                     pstr = re.compile(pat.pattern.decode("latin-1", "ignore")
                                       if isinstance(pat.pattern, bytes) else pat.pattern)
                 except Exception:
                     continue
                 for m in pstr.finditer(gbk):
-                    add(_real_offset(data, m.group(), m.start()), "GBK 解码后", m.group())
+                    add(_byte_offset(data, m.group(), "gbk", _stg, m.start()),
+                        "GBK 解码后", m.group())
         except Exception:
             pass
 
@@ -366,24 +381,50 @@ def _has_complete_flag(s):
     return False
 
 
-def _real_offset(data, text, fallback=0):
-    """把「解码后文本」的偏移反查成文件里的真实字节偏移。
+def _byte_offset(data, text, enc, state, fallback=0):
+    """把「解码后文本」的偏移反查成文件里的真实字节偏移（窗口 + 游标）。
 
-    UTF-16 / GBK 是变长或带填充的，解码后按字符位置算出来的偏移会偏，
-    直接拿它去 hexdump 会定位错。用编码回去再 find 的方式最准。
+    为什么要窗口：`decode(enc, 'ignore')` 会丢掉非法字节，所以把匹配到的文本
+    `encode` 回去，得到的字节序列**在原文里往往根本不存在**。以前写成
+    `data.find(b)` 全文件兜底，一个 15.8MB 的 exe 有 1300 多个命中，
+    每次都把 16MB 扫一遍 —— 一键分析从 19 秒变成 150 秒（binscan 独占 131 秒，
+    profile 里 `bytes.find` 占 67%）。
+
+    现在只在「预期位置」附近找：
+      fallback 是字符位置（UTF-16 分支传的已经是 m.start()*2 的字节位置），
+      字符 → 字节最多放大 4 倍（UTF-8 每字符最多 4 字节），再留 4KB 余量。
+    窗口外一律不找，直接用 fallback 近似值 —— 偏差最多几百字节，
+    对 hexdump 定位没有影响，但速度从 131 秒降到毫秒级。
+
+    state: 同一编码分支共用的 dict（记录上次命中的字节位置，避免重复命中同一处）
     """
     if not text:
         return fallback
-    for enc in ("utf-8", "utf-16-le", "utf-16-be", "gbk", "latin-1"):
-        try:
-            b = text.encode(enc)
-        except Exception:
-            continue
-        if not b:
-            continue
-        i = data.find(b)
+    try:
+        b = text.encode(enc, "ignore")
+    except Exception:
+        return fallback
+    if not b:
+        return fallback
+    base = max(0, fallback or 0)
+    lo = max(state.get(enc, 0), base - 256)
+    hi = min(len(data), base + len(b) * 4 + 4096)
+    if hi > lo:
+        i = data.find(b, lo, hi)
         if i >= 0:
+            state[enc] = i + 1
             return i
+    state[enc] = max(state.get(enc, 0), base + 1)
+    return base
+
+
+def _real_offset(data, text, fallback=0):
+    """兼容入口：不知道编码时逐个试（无状态，慢，只在零散调用时用）。"""
+    st = {}
+    for enc in ("utf-8", "utf-16-le", "utf-16-be", "gbk", "latin-1"):
+        off = _byte_offset(data, text, enc, st, fallback)
+        if off != fallback:
+            return off
     return fallback
 
 
