@@ -134,7 +134,10 @@ def normalize(g):
         i = g.find(b"{")
         prefix, tail = g[:i], g[i:]
         body = tail[1:-1] if tail.endswith(b"}") else tail[1:]
-        if not re.search(rb"[A-Za-z0-9]", body):
+        # 内容里既没有 ASCII 字母数字、也没有非 ASCII 字节 -> 不像 flag
+        # （后者是为了放行中文 flag：flag{中文}。原来只认 [A-Za-z0-9]，
+        #   中文内容会被判成 None，导致 GBK/UTF-16 扫出来的中文 flag 全被丢掉）
+        if not re.search(rb"[A-Za-z0-9]", body) and not any(b >= 0x80 for b in body):
             return None
         pl = prefix.decode("latin-1").lower()
         words = _cache.get("words") or []

@@ -250,6 +250,7 @@ _BS_CASES = [
     ("URL 全编码", "".join("%%%02x" % b for b in _FL.encode()).encode()),
     ("URL 部分编码", _up.quote(_FL, safe="").encode()),
     ("GBK 中文", "flag{中文扫描}".encode("gbk")),
+    ("UTF-8 中文", "flag{中文扫描}".encode("utf-8")),
 ]
 _bs_ok = 0
 for _n, _d in _BS_CASES:
@@ -259,7 +260,24 @@ for _n, _d in _BS_CASES:
         _bs_ok += 1
     else:
         print("    MISS: %s -> %s" % (_n, _h[:1]))
-chk("11 种编码形式全检出", _bs_ok == len(_BS_CASES), "%d/%d" % (_bs_ok, len(_BS_CASES)))
+chk("12 种编码形式全检出", _bs_ok == len(_BS_CASES), "%d/%d" % (_bs_ok, len(_BS_CASES)))
+# 3 层链式解码
+_inner = "flag{chain_limit_ok}"
+_l3 = base64.b64encode(base64.b64encode(_inner.encode()).decode().encode().hex().encode()).decode()
+_h3 = BS.scan(("n " + _l3 + " t").encode(), deep=False, chain=True, chain_depth=3)
+chk("3 层链式解码", any(_inner in x[2] for x in _h3), str([x[2][:20] for x in _h3[:1]]))
+chk("链式解码标注链路", any("→" in x[1] for x in _h3))
+# 深度限制：4 层套娃在 3 层限制下解不出
+_l4 = base64.b64encode(base64.b64encode(_l3.encode()).decode().encode()).decode()
+_h4 = BS.scan(("n " + _l4 + " t").encode(), deep=False, chain=True, chain_depth=3)
+chk("3 层限制不越界", not any(_inner in x[2] for x in _h4))
+# 占位符排除
+chk("占位符 flag{...} 排除", not BS.scan(b"flag{...}", deep=False))
+chk("占位符 ctf{xxx} 排除", not BS.scan(b"ctf{xxx}", deep=False))
+chk("真 flag 不误杀", any("real_one" in x[2] for x in BS.scan(b"flag{real_one_123}", deep=False)))
+# 前缀粘连修复
+chk("前缀粘连修复", any(x[2].startswith("flag{") for x in
+                        BS.scan(b"X" * 40 + b"flag{glued}", deep=False)))
 chk("命中带偏移", all(isinstance(x[0], int) for x in BS.scan(_FL.encode())))
 chk("命中带 hexdump 上下文", "00000000" in BS.scan(_FL.encode())[0][3])
 chk("自定义关键词", any("PASSWORD" in x[2] for x in BS.scan(b"...PASSWORD...", keywords=["password"])))

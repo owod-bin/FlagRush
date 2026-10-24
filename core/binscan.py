@@ -107,14 +107,18 @@ def xor_scan(data, pats, max_scan=8 * 1024 * 1024, limit=20):
 
 
 # ---------------------------------------------------------------- 主扫描
-def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 1024):
+def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 1024,
+         chain=True, chain_depth=3):
     """在任意字节流里全方位找 flag / 关键词。
 
     data:     bytes（调用方负责读文件，大文件请用 scan_file 流式版）
     keywords: 额外要搜的关键词（如 ["password", "secret"]）
     deep:     是否做异或扫描（关掉更快）
+    chain:    命中后是否继续剥编码（默认开）
+    chain_depth: 最多剥几层（默认 3 —— 再深基本是浪费时间）
 
     返回 [(偏移, 编码形式, 命中文本, 上下文hexdump)]
+    开了 chain 时，「编码形式」里会带上链路，如「原始 ascii → base64 → hex」
     """
     if isinstance(data, str):
         data = data.encode("utf-8", "ignore")
@@ -129,6 +133,29 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
     def add(off, form, text, ctx_data=None):
         if not text:
             return
+        # 含大括号的过一遍 flagfmt.normalize：
+        # 正则前缀是贪婪的，文件里 "XXXX...Xflag{abc}" 会被整体匹配下来，
+        # normalize 能把它修成 "flag{abc}"（内部按「已知 flag 词结尾」切前缀）。
+        if "{" in text and flagfmt:
+            try:
+                n = flagfmt.normalize(text.encode("utf-8", "ignore"))
+                if n:
+                    text = n.decode("utf-8", "ignore")
+                else:
+                    # normalize 明确判为「不像 flag」（占位符 flag{...}、
+                    # body{color:red} 这种），直接丢掉，别污染结果
+                    return
+            except Exception:
+                pass
+            # 内容级占位符再兜一层：normalize 只管格式（前缀在白名单里就放行），
+            # ctf{xxx} / flag{your_flag} 这种内容全是占位符的它挡不住
+            if not _has_complete_flag(text):
+                return
+        # 既没花括号、又不含 flag/ctf 关键词的，是宽松正则的误匹配（如 "XXXXfl"），丢掉
+        low = text.lower()
+        if "{" not in text and "flag" not in low and "ctf" not in low:
+            if not any(k and k.lower() in low for k in (keywords or [])):
+                return
         k = (off, text)
         if k in seen:
             return
@@ -163,7 +190,8 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
                 continue
             try:
                 for m in pstr.finditer(txt):
-                    add(m.start() * step, name, m.group())
+                    # 解码后是字符偏移，必须反查真实字节偏移（前面有 ascii 时 *2 会错）
+                    add(_real_offset(data, m.group(), m.start() * step), name, m.group())
             except Exception:
                 continue
 
@@ -239,7 +267,23 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
                 txt = dec[s:e].decode("utf-8", "ignore")
                 add(m.start(), "URL 编码（偏移 +%d）" % s, txt)
 
-    # ---- 7) GBK 中文（中文 flag / 中文提示）
+    # ---- 7a) UTF-8 中文（最常见的编码，之前漏了：原始 ascii 分支要求无 >=0x80，
+    #          而 GBK 分支解 UTF-8 数据是乱码，导致 flag{中文} 直接抓不到）
+    if any(b >= 0x80 for b in data[:4096]):
+        try:
+            u8 = data.decode("utf-8", "ignore")
+            for pat in allpats:
+                try:
+                    pstr = re.compile(pat.pattern.decode("latin-1", "ignore")
+                                      if isinstance(pat.pattern, bytes) else pat.pattern)
+                except Exception:
+                    continue
+                for m in pstr.finditer(u8):
+                    add(_real_offset(data, m.group(), m.start()), "UTF-8 中文", m.group())
+        except Exception:
+            pass
+
+    # ---- 7b) GBK 中文（中文 flag / 中文提示）
     if any(b >= 0x80 for b in data[:4096]):
         try:
             gbk = data.decode("gbk", "ignore")
@@ -250,7 +294,7 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
                 except Exception:
                     continue
                 for m in pstr.finditer(gbk):
-                    add(m.start(), "GBK 解码后", m.group())
+                    add(_real_offset(data, m.group(), m.start()), "GBK 解码后", m.group())
         except Exception:
             pass
 
@@ -259,13 +303,172 @@ def scan(data, keywords=None, max_hits=60, deep=True, max_xor_scan=8 * 1024 * 10
         for off, form, txt in xor_scan(data, allpats, max_scan=max_xor_scan):
             add(off, form, txt)
 
-    # 按偏移排序，命中的 flag 排前面
-    out.sort(key=lambda x: (0 if "flag" in x[2].lower() or "ctf" in x[2].lower() else 1, x[0]))
+    # ---- 9) 可疑编码串候选：本身不含 flag，但继续剥能剥出 flag
+    # 三层套娃的典型情况：文件里是 base64(hex(base64(flag)))，
+    # 第一层解出来只有 hex 串、不含 flag，按原来的「解出 flag 才算命中」会直接漏掉。
+    # 这里单独收集「像编码的长串」，往下剥最多 chain_depth 层，剥出 flag 才报告。
+    if chain:
+        cand_cnt = 0
+        for m in re.finditer(rb"[A-Za-z0-9+/=%\-]{16,512}", data):
+            if cand_cnt >= 24:
+                break
+            tok = m.group().decode("latin-1", "ignore")
+            if not _looks_encoded(tok):
+                continue
+            cand_cnt += 1
+            deeper, ch = _chain_decode(tok, chain_depth)
+            if not deeper or deeper == tok:
+                continue
+            if _has_complete_flag(deeper) or any(
+                    k and k.lower() in deeper.lower() for k in (keywords or [])):
+                add(m.start(), "可疑编码串 → " + " → ".join(ch[:chain_depth]) if ch
+                    else "可疑编码串", deeper)
+
+    # 命中后继续往下剥（限 chain_depth 层）
+    if chain and out:
+        try:
+            out = _deepen(out, max_depth=chain_depth)
+        except Exception:
+            pass
+
+    # 排序：完整 flag 优先，其次按偏移
+    def _rank(x):
+        t = x[2]
+        full = 1 if _has_complete_flag(t) else 0
+        kw = 1 if ("flag" in t.lower() or "ctf" in t.lower()) else 0
+        return (-full, -kw, x[0])
+
+    out.sort(key=_rank)
     return out[:max_hits]
 
 
+
+# ---------------------------------------------------------------- 命中后继续往下剥（限 3 层）
+def _has_complete_flag(s):
+    """已经是一个带右括号的**真** flag，就不用再往下剥了。
+
+    要排除占位符：源码/文档里常见 `flag{...}`、`ctf{xxx}`、`flag{<your_flag>}`
+    这种，内容全是点/字母 x/尖括号的，不是真 flag。
+    """
+    if not s:
+        return False
+    for m in re.finditer(r"[A-Za-z][A-Za-z0-9_]{1,19}\{([^}\r\n]{2,})\}", s):
+        inner = m.group(1).strip()
+        # 全是同一个字符（...、xxx、***）或是占位符写法
+        if len(set(inner)) <= 1:
+            continue
+        if re.fullmatch(r"[<\[{(]?[\w\s\-]*[>\]})]?", inner) and \
+                re.search(r"[<>\[\]{}]", inner):
+            continue
+        if inner.lower() in ("your_flag", "yourflag", "flag", "xxx", "test", "example"):
+            continue
+        return True
+    return False
+
+
+def _real_offset(data, text, fallback=0):
+    """把「解码后文本」的偏移反查成文件里的真实字节偏移。
+
+    UTF-16 / GBK 是变长或带填充的，解码后按字符位置算出来的偏移会偏，
+    直接拿它去 hexdump 会定位错。用编码回去再 find 的方式最准。
+    """
+    if not text:
+        return fallback
+    for enc in ("utf-8", "utf-16-le", "utf-16-be", "gbk", "latin-1"):
+        try:
+            b = text.encode(enc)
+        except Exception:
+            continue
+        if not b:
+            continue
+        i = data.find(b)
+        if i >= 0:
+            return i
+    return fallback
+
+
+def _looks_encoded(s):
+    """粗筛：这段文本像不像「还套着一层编码」。
+
+    只在像的时候才调解码链 —— 用户明确要求「最多 3 层，多了浪费时间」，
+    所以不能对每个命中都无脑往下跑。
+    """
+    t = (s or "").strip()
+    if len(t) < 8 or len(t) > 4096:
+        return False
+    if _has_complete_flag(t):
+        return False
+    # 二进制串
+    if re.fullmatch(r"[01\s]{16,}", t):
+        return True
+    # 纯 hex（含带空格的写法）
+    if re.fullmatch(r"[0-9A-Fa-f\s:,-]{16,}", t) and len(re.sub(r"\W", "", t)) >= 16:
+        return True
+    # base64 / base32 风格
+    if re.fullmatch(r"[A-Za-z0-9+/=]{12,}", t) or re.fullmatch(r"[A-Z2-7=]{12,}", t):
+        return True
+    # URL 编码
+    if "%" in t and re.search(r"%[0-9A-Fa-f]{2}", t):
+        return True
+    # 摩斯
+    if re.fullmatch(r"[.\-\s/]{12,}", t):
+        return True
+    # 二进制/八进制/十进制数字串
+    if re.fullmatch(r"[0-9\s,]{12,}", t):
+        return True
+    return False
+
+
+def _chain_decode(text, max_depth=3):
+    """对一段文本继续剥确定性编码，**最多 max_depth 层**。
+
+    用 crypto.peel（确定性编码剥离）而不是 crypto.analyze（A* 搜索）：
+    peel 轻量、可控步数，analyze 有自己的 8 秒超时，套在这里太重。
+    """
+    if max_depth <= 0:
+        return text, []
+    try:
+        import crypto
+    except Exception:
+        return text, []
+    try:
+        p, ch, _sc = crypto.peel(text, max_depth)
+    except Exception:
+        return text, []
+    if not p or p == text:
+        return text, []
+    return p, list(ch or [])
+
+
+def _deepen(hits, max_depth=3, max_items=12):
+    """对命中结果做「最多 max_depth 层」的继续解码，剥出新内容的追加为新命中。
+
+    返回新的 hits 列表（原命中保留，剥出来的追加在后面）。
+    """
+    out = list(hits)
+    extra = []
+    for off, form, txt, ctx in hits[:max_items]:
+        if not _looks_encoded(txt):
+            continue
+        deeper, chain = _chain_decode(txt, max_depth)
+        if not deeper or deeper == txt:
+            continue
+        # 链路写进「编码形式」字段，返回结构保持不变
+        newform = "%s → %s" % (form, " → ".join(chain[:max_depth]) if chain else "解码")
+        extra.append((off, newform, deeper, ctx))
+    # 去重（同一偏移 + 同一内容只留一条）
+    seen = set((h[0], h[2]) for h in out)
+    for h in extra:
+        k = (h[0], h[2])
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(h)
+    return out
+
 # ---------------------------------------------------------------- 文件入口
-def scan_file(path, keywords=None, deep=True, chunk=4 * 1024 * 1024):
+def scan_file(path, keywords=None, deep=True, chunk=4 * 1024 * 1024,
+              chain=True, chain_depth=3):
     """扫文件。小文件一次读入；大文件分块 + 重叠，避免跨块漏。"""
     import os
     if not os.path.isfile(path):
@@ -273,7 +476,8 @@ def scan_file(path, keywords=None, deep=True, chunk=4 * 1024 * 1024):
     size = os.path.getsize(path)
     if size <= 32 * 1024 * 1024:
         with open(path, "rb") as f:
-            return scan(f.read(), keywords=keywords, deep=deep)
+            return scan(f.read(), keywords=keywords, deep=deep,
+                        chain=chain, chain_depth=chain_depth)
     # 大文件：分块，块间重叠 64KB（够覆盖一个 flag 加余量）
     out = []
     overlap = 64 * 1024
@@ -283,7 +487,8 @@ def scan_file(path, keywords=None, deep=True, chunk=4 * 1024 * 1024):
             blob = f.read(chunk + overlap)
             if not blob:
                 break
-            for o, form, txt, ctx in scan(blob, keywords=keywords, deep=deep):
+            for o, form, txt, ctx in scan(blob, keywords=keywords, deep=deep,
+                                          chain=chain, chain_depth=chain_depth):
                 out.append((off + o, form, txt, ctx))
             if len(blob) <= overlap:
                 break
