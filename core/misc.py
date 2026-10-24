@@ -1527,6 +1527,26 @@ def analyze(path, outdir=None, deep=True, verbose=True):
         except Exception:
             pass
 
+    # 5.33) Whitespace 程序：整份文件只有空格/Tab/换行，肉眼完全看不见
+    #       （在编辑器里打开是"空白文件"，必须看十六进制或全选才能发现）
+    if 16 <= size <= 2 * 1024 * 1024:
+        _probe = data[:65536]
+        _wsn = sum(1 for _b in _probe if _b in (0x20, 0x09, 0x0A, 0x0D))
+        if _wsn >= len(_probe) * 0.95:
+            try:
+                import crypto as _cr
+                _wsr = _cr._ws_run(data.decode("latin-1", "ignore"))
+                if _wsr:
+                    rep["notes"].append(
+                        "★ 这是 Whitespace 程序（整份文件只有空格/Tab/换行），解出：%s"
+                        % _wsr[:300])
+                    _h, _c = find_flags_in(_wsr.encode("utf-8", "ignore"))
+                    rep["flags"] += [x.decode("utf-8", "ignore") for x in _h]
+                    if not _h and len(_wsr) >= 4:
+                        rep["cands"].append(_wsr[:300])
+            except Exception:
+                pass
+
     # 5.35) 十六进制概览：文件头 hexdump + flag 命中位置的上下文
     # hexq 模块之前只被 filemerge 用，用户在界面上根本看不到 hexdump —— 补上。
     if size >= 16:

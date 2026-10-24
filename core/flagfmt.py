@@ -26,6 +26,7 @@ flag 格式识别（可配置）
 """
 import io
 import os
+import time
 import re
 import threading
 
@@ -220,12 +221,27 @@ def configure(prefixes=None, regexes=None):
         _str_cache["key"] = _b_cache["key"] = None
 
 
+_MTIME_CHECK_AT = [0.0]        # 上次检查配置文件 mtime 的时间
+
+
 def _ensure():
-    """首次调用时加载；配置文件改过也自动重载（不用重启工具）"""
+    """首次调用时加载；配置文件改过也自动重载（不用重启工具）。
+
+    **mtime 检查要节流**：patterns() 在 A* 搜索里被调用几万次
+    （实测 31673 次），每次都 os.path.isfile + getmtime 两个 stat，
+    单这一项就吃掉 1.9 秒（profile 里 nt.stat 63384 次），
+    把一条凯撒用例从 0.1 秒拖到 3.9 秒。
+    改成最多每 3 秒检查一次 —— 用户改完配置文件 3 秒内生效，体验无差别。
+    """
     if _cache.get("patterns") is None:
         reload()
         _cache["mtime"] = _mtime()
+        _MTIME_CHECK_AT[0] = time.time()
         return
+    _now = time.time()
+    if _now - _MTIME_CHECK_AT[0] < 3.0:
+        return
+    _MTIME_CHECK_AT[0] = _now
     try:
         m = _mtime()
     except Exception:

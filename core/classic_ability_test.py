@@ -255,6 +255,30 @@ add("Ook!（小写）", _OOK_TXT.lower(), [])
 add("Ook!（连写无空格）", _OOK_TXT.replace(" ", ""), [])
 add("Brainfuck", _bf_print("flag{brainfuck}"), [])
 
+# ---------- 21. Whitespace / JSFuck（esolang）----------
+_WS_S, _WS_T, _WS_L = " ", "\t", "\n"
+
+
+def _ws_push(n):
+    sign = _WS_S if n >= 0 else _WS_T
+    bits = bin(abs(n))[2:]
+    return (_WS_S + _WS_S + sign
+            + "".join(_WS_T if b == "1" else _WS_S for b in bits) + _WS_L)
+
+
+def _ws_prog(txt):
+    """生成「逐个字符 push + 输出」的 Whitespace 程序"""
+    return "".join(_ws_push(ord(c)) + _WS_T + _WS_L + _WS_S + _WS_S
+                   for c in txt) + _WS_L + _WS_L
+
+
+add("Whitespace", _ws_prog("flag{whitespace}"), [])
+
+# JSFuck：'false' 的字符按索引取，再拼起来（纯 Python 求值器覆盖这种写法）
+_JS_IDX = {0: "+[]", 1: "+!+[]", 2: "!+[]+!+[]", 3: "!+[]+!+[]+!+[]",
+           4: "!+[]+!+[]+!+[]+!+[]"}
+add("JSFuck", "+".join(["(![]+[])[%s]" % _JS_IDX[i] for i in (0, 2, 1, 3)] * 3), [])
+
 add("中文电码", "0022 0947 0032", [])
 add("笔画码", "1121 121 251", [])
 

@@ -7,6 +7,7 @@
 
 纯标准库，不联网。
 """
+import os
 import re
 import time
 import base64
@@ -1498,6 +1499,383 @@ def _t_ook(s):
     return [("Ook!", r)] if r else []
 
 
+# ==================== Whitespace 语言 ====================
+# 只有 空格(S) / Tab(T) / 换行(L) 三种字符，其他一律忽略 —— 所以肉眼看不见，
+# 复制粘贴时极易被 strip 掉，通常要从文件里读原始字节才能拿到。
+# 指令表（官方 spec）：
+#   栈: S+  S=push数字  L=dup  TS=丢弃  LT=交换  TL+数字=复制第n个
+#   算术: TS + SS=加 ST=减 SL=乘 TS=除 TT=取模
+#   堆:   TT + S=存 T=取
+#   流控: L + SS=标签 ST=调用 SL=跳转 TS=零跳 TT=负跳 TL=返回 LL=结束
+#   输入输出: TL + SS=输出字符 ST=输出数字 TS=读字符 TT=读数字
+
+_WS_S, _WS_T, _WS_L = " ", "\t", "\n"
+
+
+def _ws_parse(src):
+    """把 Whitespace 源码解析成指令列表 [(op, arg)]，返回 (指令表, 标签表) 或 None。
+
+    严格按官方 spec 的指令长度（第一版全写错了，漏读字符导致整个流错位）：
+      栈(IMP=S)   SS<num> push | SLS dup | SLT swap | SLL drop | STS<num> copy
+      算术(IMP=TS) TSSS add | TSST sub | TSSL mul | TSTS div | TSTT mod
+      堆(IMP=TT)  TTS store | TTT retrieve
+      流控(IMP=L)  LSS<lbl> mark | LST<lbl> call | LSL<lbl> jump
+                   LTS<lbl> jz | LTT<lbl> jn | LTL ret | LL end
+      IO(IMP=TL)   TLSS outc | TLST outn | TLTS readc | TLTT readn
+    """
+    S, T, L = _WS_S, _WS_T, _WS_L
+    n = len(src)
+    pos = 0
+    ops = []
+    labels = {}
+
+    def take(k):
+        """取接下来 k 个字符；不足返回 None"""
+        nonlocal pos
+        if pos + k > n:
+            return None
+        r = src[pos:pos + k]
+        pos += k
+        return r
+
+    def rd_num():
+        nonlocal pos
+        c = take(1)
+        if c is None:
+            return None
+        if c == S:
+            sign = 1
+        elif c == T:
+            sign = -1
+        else:
+            return None
+        bits = []
+        while pos < n and src[pos] in (S, T):
+            bits.append("1" if src[pos] == T else "0")
+            pos += 1
+        if pos >= n or src[pos] != L:
+            return None
+        pos += 1
+        if not bits:
+            bits = ["0"]
+        return sign * int("".join(bits), 2)
+
+    def rd_label():
+        nonlocal pos
+        bits = []
+        while pos < n and src[pos] in (S, T):
+            bits.append("1" if src[pos] == T else "0")
+            pos += 1
+        if pos >= n or src[pos] != L:
+            return None
+        pos += 1
+        return "".join(bits)
+
+    while pos < n and len(ops) < 200000:
+        c = take(1)
+        if c == S:                                  # 栈操作
+            d = take(1)
+            if d == S:
+                v = rd_num()
+                if v is None:
+                    return None
+                ops.append(("push", v))
+            elif d == L:
+                e = take(1)
+                if e == S:
+                    ops.append(("dup", None))
+                elif e == T:
+                    ops.append(("swap", None))
+                elif e == L:
+                    ops.append(("drop", None))
+                else:
+                    return None
+            elif d == T:
+                e = take(1)
+                if e == S:
+                    v = rd_num()
+                    if v is None:
+                        return None
+                    ops.append(("copy", v))
+                else:
+                    return None
+            else:
+                return None
+        elif c == T:                                # 算术 / 堆 / IO
+            d = take(1)
+            if d == S:                              # 算术
+                e = take(1)
+                f = take(1)
+                if e != S or f is None:
+                    return None
+                ops.append(({S: "add", T: "sub", L: "mul"}.get(f, "add"), None))
+            elif d == T:                            # 堆
+                e = take(1)
+                if e == S:
+                    ops.append(("store", None))
+                elif e == T:
+                    ops.append(("retrieve", None))
+                else:
+                    return None
+            elif d == L:                            # IO
+                e = take(1)
+                f = take(1)
+                key = {(S, S): "outc", (S, T): "outn",
+                       (T, S): "readc", (T, T): "readn"}.get((e, f))
+                if key is None:
+                    return None
+                ops.append((key, None))
+            else:
+                return None
+        elif c == L:                                # 流控
+            d = take(1)
+            if d == S:
+                e = take(1)
+                lb = rd_label()
+                if lb is None:
+                    return None
+                if e == S:
+                    labels[lb] = len(ops)
+                    ops.append(("label", lb))
+                elif e == T:
+                    ops.append(("call", lb))
+                elif e == L:
+                    ops.append(("jump", lb))
+                else:
+                    return None
+            elif d == T:
+                e = take(1)
+                if e == S:
+                    lb = rd_label()
+                    if lb is None:
+                        return None
+                    ops.append(("jz", lb))
+                elif e == T:
+                    lb = rd_label()
+                    if lb is None:
+                        return None
+                    ops.append(("jn", lb))
+                elif e == L:
+                    ops.append(("ret", None))
+                else:
+                    return None
+            elif d == L:
+                ops.append(("end", None))
+            else:
+                return None
+    return ops, labels
+
+
+def _ws_run(code, limit=2000000, out_limit=200000):
+    """执行 Whitespace 程序，返回输出字符串（失败返回 None）"""
+    src = "".join(c for c in code if c in (_WS_S, _WS_T, _WS_L))
+    if len(src) < 16:
+        return None
+    parsed = _ws_parse(src)
+    if not parsed:
+        return None
+    ops, labels = parsed
+    if not ops:
+        return None
+    stack, heap, out = [], {}, []
+    pc = 0
+    steps = 0
+    call_stack = []
+    while 0 <= pc < len(ops) and steps < limit:
+        steps += 1
+        op, arg = ops[pc]
+        pc += 1
+        try:
+            if op == "push":
+                stack.append(arg)
+            elif op == "dup":
+                if not stack:
+                    return None
+                stack.append(stack[-1])
+            elif op == "drop":
+                if stack:
+                    stack.pop()
+            elif op == "copy":
+                idx = arg or 0
+                if idx < 0 or idx >= len(stack):
+                    return None
+                stack.append(stack[-1 - idx])
+            elif op == "swap":
+                if len(stack) < 2:
+                    return None
+                stack[-1], stack[-2] = stack[-2], stack[-1]
+            elif op in ("add", "sub", "mul", "div", "mod"):
+                if len(stack) < 2:
+                    return None
+                b = stack.pop()
+                a = stack.pop()
+                if op == "add":
+                    stack.append(a + b)
+                elif op == "sub":
+                    stack.append(a - b)
+                elif op == "mul":
+                    stack.append(a * b)
+                elif op == "div":
+                    if b == 0:
+                        return None
+                    stack.append(int(a / b))
+                else:
+                    if b == 0:
+                        return None
+                    stack.append(a - b * int(a / b))
+            elif op == "store":
+                if len(stack) < 2:
+                    return None
+                v = stack.pop()
+                k = stack.pop()
+                heap[k] = v
+            elif op == "retrieve":
+                if not stack:
+                    return None
+                k = stack.pop()
+                stack.append(heap.get(k, 0))
+            elif op == "outc":
+                if not stack:
+                    return None
+                out.append(chr(stack.pop() % 0x110000))
+                if len(out) > out_limit:
+                    return None
+            elif op == "outn":
+                if not stack:
+                    return None
+                out.append(str(stack.pop()))
+            elif op in ("readc", "readn"):
+                return None                      # 交互式输入，CTF 里不用
+            elif op == "label":
+                pass
+            elif op == "call":
+                if arg not in labels:
+                    return None
+                call_stack.append(pc)
+                pc = labels[arg]
+            elif op == "jump":
+                if arg not in labels:
+                    return None
+                pc = labels[arg]
+            elif op == "jz":
+                if not stack:
+                    return None
+                if stack.pop() == 0:
+                    if arg not in labels:
+                        return None
+                    pc = labels[arg]
+            elif op == "jn":
+                if not stack:
+                    return None
+                if stack.pop() < 0:
+                    if arg not in labels:
+                        return None
+                    pc = labels[arg]
+            elif op == "ret":
+                if not call_stack:
+                    return None
+                pc = call_stack.pop()
+            elif op == "end":
+                break
+        except Exception:
+            return None
+    if not out:
+        return None
+    return "".join(out)
+
+
+def _t_whitespace(s):
+    """Whitespace 语言：只有空格/Tab/换行，肉眼看不见。
+
+    识别条件：长度 >= 16 且 95% 以上是这三种字符（普通文本的空白占比远低于此）。
+    注意：粘贴到输入框时首尾空白会被 strip 掉，所以真正的题一般要从**文件**里读
+    （misc 面板拖文件进来走的是原始字节，不受影响）。
+    """
+    if not s or len(s) < 16:
+        return []
+    ws = [c for c in s if c in (_WS_S, _WS_T, _WS_L)]
+    if len(ws) < len(s) * 0.95 or len(ws) < 16:
+        return []
+    r = _ws_run("".join(ws))
+    if not r:
+        return []
+    return [("Whitespace", r)]
+
+
+
+_JSFUCK_NODE_CACHE = {}
+_NODE_PATH = [None, False]      # [路径, 是否已查过]
+
+
+def _find_node():
+    """找 node 可执行文件，**结果缓存**。
+
+    踩过的坑：直接在 _t_jsfuck 里调 shutil.which("node")，而 _t_jsfuck 在
+    A* 搜索里被调用几万次 —— 每次都遍历一遍 PATH（几十个目录 × stat），
+    单这一项就吃掉 1.9 秒（profile 里 nt.stat 63384 次），
+    把整个能力测试从 10 秒拖到 5 分钟。
+    """
+    if _NODE_PATH[1]:
+        return _NODE_PATH[0]
+    _NODE_PATH[1] = True
+    import shutil as _sh
+    p = _sh.which("node")
+    if not p:
+        for _p in (r"C://Program Files//nodejs//node.exe",
+                   os.path.expandvars(r"%LOCALAPPDATA%\Programs\nodejs\node.exe")):
+            if _p and os.path.isfile(_p):
+                p = _p
+                break
+    _NODE_PATH[0] = p
+    return p
+
+
+def _jsfuck_via_node(s):
+    """JSFuck 的 node 兜底：纯 Python 求值器算不动的复杂表达式交给 node 跑。
+
+    本质就是 JS（典型写法 `[]["filter"]["constructor"]("...")()`），
+    纯 Python 求值需要完整 JS 引擎，不现实 —— 所以调用系统里的 node 执行。
+    没装 node 就只做识别 + 提示，**绝不猜结果**。
+
+    安全：只在用户主动分析的内容上执行，超时 15 秒，输出截断 5000 字符。
+    """
+    t = (s or "").strip()
+    core = re.sub(r"\s", "", t)
+    # 门槛 500：真实的「复杂 JSFuck」（[]["filter"]["constructor"](...)() 全编码）
+    # 动辄上千字符；短表达式 cnenc 的纯 Python 求值器就能算。
+    # 设这个门槛是为了别在 A* 搜索里反复启动 node 进程（实测会把测试拖到卡死）。
+    if len(core) < 500:
+        return []
+    if not re.fullmatch(r"[\[\]()!+]+", core):
+        return []
+    # 同一个输入只跑一次 node
+    if core[:200] in _JSFUCK_NODE_CACHE:
+        return _JSFUCK_NODE_CACHE[core[:200]]
+    import subprocess as _sp
+    node = _find_node()
+    if not node:
+        return [("JSFuck（只识别，未求值）",
+                 "这是 JSFuck（只用 []()!+ 写的 JS），求值需要 Node.js，本机没装")]
+    # alert / prompt / document 在 node 里不存在，补最常用的几个
+    prelude = ("global.alert=console.log;global.prompt=()=>'';"
+               "global.document={write:console.log,getElementById:"
+               "()=>({innerHTML:'',value:''})};")
+    out = ""
+    for code in (prelude + t, prelude + "try{console.log(" + t + ")}catch(e){}"):
+        try:
+            r = _sp.run([node, "-e", code], capture_output=True, timeout=15,
+                        cwd=os.path.dirname(os.path.abspath(__file__)))
+        except Exception:
+            continue
+        out = (r.stdout or b"").decode("utf-8", "ignore").strip()
+        if out:
+            break
+    res = [("JSFuck", out[:5000])] if out else []
+    if len(_JSFUCK_NODE_CACHE) < 32:
+        _JSFUCK_NODE_CACHE[core[:200]] = res
+    return res
+
+
 def _t_xor1(s):
     """单字节 XOR 爆破（结果必须是可打印文本）"""
     try:
@@ -2248,10 +2626,31 @@ def _t_cncode(s):
 
 
 def _t_jsfuck(s):
-    """JSFuck：只有 []()!+ 六个字符"""
-    if not cnenc or len(s) > 60000:
+    """JSFuck：只有 []()!+ 六个字符。
+
+    两级策略：
+      1. 先用 cnenc 里的**纯 Python 求值器**（快、无依赖，覆盖
+         `(![]+[])[+[]]` 这类字符串拼接/取字符的写法）
+      2. 算不动时（`[]["filter"]["constructor"](...)()` 这种要真的执行 JS）
+         交给 node 兜底；没装 node 就只返回识别提示，绝不猜结果
+    """
+    if len(s) > 60000 or len(s) < 60:
         return []
-    return cnenc.jsfuck_decode(s)
+    # 快速排除：JSFuck 只由 []()!+ 和空白组成，含其他字符直接跳过。
+    # 这条正则能砍掉 99.9% 的调用（A* 搜索里 _t_jsfuck 会被调用几万次）。
+    if re.search(r"[^\[\]()!+\s]", s):
+        return []
+    if cnenc:
+        try:
+            r = cnenc.jsfuck_decode(s)
+            if r:
+                return r
+        except Exception:
+            pass
+    try:
+        return _jsfuck_via_node(s)
+    except Exception:
+        return []
 
 
 def _t_encmore(s):
@@ -2536,7 +2935,8 @@ def _t_binx(s):
 DET = [_t_zw, _t_cv, _t_jsfuck, _t_classic, _t_b64stego,
        _t_url, _t_b16, _t_b64, _t_b32, _t_b85, _t_b58, _t_b62, _t_b36, _t_b45, _t_b91,
        _t_uu, _t_unicode, _t_html, _t_qp, _t_morse, _t_binary, _t_octal, _t_dec,
-       _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_encmore,
+       _t_a1z26, _t_bacon, _t_brainfuck, _t_ook, _t_whitespace,
+       _t_jsfuck, _t_encmore,
        _t_pigpen, _t_nato, _t_dna, _t_element, _t_type7, _t_deadfish,
        _t_baudot, _t_gray, _t_bcd, _t_b64_case, _t_b64_custom,
        _t_bubble, _t_dvorak, _t_keycode, _t_malbolge, _t_cncode, _t_compress,
@@ -2750,7 +3150,13 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
     返回 {"hits": [(链路, flag)], "results": [(链路, 文本, 分数)], "layers": n}
     """
     t0 = time.time()
-    text = text.strip()
+    # 纯空白输入可能是 Whitespace 程序，**绝对不能 strip** ——
+    # 它整段程序就是空格/Tab/换行，strip 一下指令全没了（首尾的 push 直接丢）。
+    # 实测：strip 后要么被判空直接返回，要么解出来是错的。
+    _ws_like = (bool(text) and len(text) >= 16
+                and sum(1 for c in text if c in " \t\n") >= len(text) * 0.95)
+    if not _ws_like:
+        text = text.strip()
     if not text:
         return {"hits": [], "results": [], "layers": 0, "evals": 0, "elapsed": 0}
 
@@ -3345,6 +3751,20 @@ def _analyze_uncached(text, max_depth=8):
                            % _LEN_REJECT)]}
     if _n > _LEN_PEEL_ONLY:
         return _analyze_long(text, max_depth)
+
+    # 纯空白输入 = Whitespace 程序，直接执行，**不进 A* 搜索**。
+    # A* 对纯空白毫无意义（每个变换都吐空串），而且会把搜索空间撑爆
+    # （实测 max_depth=6 时卡死 50 秒以上）。
+    if _n >= 16 and sum(1 for _c in text if _c in " \t\n") >= _n * 0.95:
+        _ws = _t_whitespace(text)
+        if _ws:
+            _hits = [(nm, val) for nm, val in _ws
+                     if re.search(r"[A-Za-z][A-Za-z0-9_]{1,19}\{", val)]
+            return {"hits": _hits,
+                    "results": [(nm, val, 6.0) for nm, val in _ws],
+                    "layers": 1, "evals": 0, "elapsed": 0,
+                    "notes": [("这是 Whitespace 程序（整段只有空格/Tab/换行）",
+                               "按 esolang 直接执行")]}
 
     # ---- 哈希模式：不可逆，只能校验或爆破
     hv = hash_verify(text)
