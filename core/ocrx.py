@@ -7,8 +7,13 @@ CTF 里的用法：
   - 截图里有报错信息/提示语，需要提取文字再分析
 
 依赖：pytesseract（Python 包装，随包安装）+ tesseract 二进制。
-**tesseract 已作为便携版随包分发**（`tools/tesseract/`，116MB 精简版），
-不用另装；找不到时退回 PATH / 系统安装目录，再找不到就给安装指引。
+**tesseract 已作为便携版随包分发**（`tools/tesseract/`，**官方安装目录整份复制**，
+241MB / 132 个文件，含 eng+chi_sim+osd 三个语言包），不用另装；
+找不到时退回 PATH / 系统安装目录，再找不到就给安装指引。
+
+为什么整份复制而不是精简：精简过三次，每次都少一个「运行时才动态加载」的 DLL
+（libbz2.dll 这种无版本号别名、libcrypto-3-x64.dll 这种测试样本没走到的路径），
+用户端表现是弹模态框 + 界面卡死在「分析中」。多 90MB 换零维护成本，值。
 """
 import os
 import re

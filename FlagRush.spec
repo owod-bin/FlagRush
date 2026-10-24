@@ -50,9 +50,13 @@ datas = [
     (os.path.join(ROOT, "app_icon_512.png"), "."),
 ]
 
-# OCR 便携版 tesseract（116MB 精简版）：tesseract.exe + 24 个必要 DLL
-# + eng/chi_sim 语言包。用 pefile 分析依赖树挑的可达 DLL，再逐个实测删掉
-# osd（10MB）/ OpenSSL（4.9MB）/ zstd（1.1MB）—— 删完中英文识别仍然正确。
+# OCR 便携版 tesseract：**官方安装目录整份复制**（132 个文件 / 243MB，
+# 含 eng + chi_sim + osd 三个语言包）。
+#
+# 为什么不精简：精简过三次，每次都少一个「运行时才动态加载」的 DLL
+# （libbz2.dll 这种无版本号别名、libcrypto-3-x64.dll 这种测试样本没走到的
+# 路径），用户端表现是弹系统错误框 + 界面卡在「分析中」。
+# 多 120MB 换零维护成本，值。完整性校验见 tools/verify_tesseract.py。
 #
 # 只在本地存在时打包：开源仓库不含这个目录（二进制不进 git），
 # clone 后需要自己放一份，否则打出来的 exe 没有 OCR（其他功能不受影响）。

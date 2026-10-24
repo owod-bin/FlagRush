@@ -7,16 +7,20 @@
 「由于找不到 xxx.dll，无法继续执行代码」，tesseract 进程卡在框上永不返回，
 pytesseract 就一直等（用户看到界面卡在「分析中…」）。
 
-已经踩过两次：
+已经踩过三次：
   1. libbz2.dll   —— libarchive 静态导入的是 libbz2-1.dll，运行时却 LoadLibrary
                      找不带版本号的 libbz2.dll（静态分析看不到）
   2. libcrypto-3-x64.dll —— 我按几个测试样本「实测可删」就删了，
                      结果用户的图走了另一条代码路径，又要它
+  3. 补完 51 个 DLL 后仍不放心 —— 最终改成**整份复制官方安装目录**，
+                     不再做任何删减（见 core/ocrx.py 的说明）
 
-所以这里做三层检查：
+所以这里做四层检查：
   ① 静态依赖：pefile 遍历所有 PE 的 import + delay-import，缺的列出来
   ② 别名：常见库的「无版本号」写法是否都有副本
-  ③ 实跑：真的用 tesseract 识别 6 种格式的图，出不来字就是坏
+  ③ 语言包：eng / chi_sim / osd 三个 traineddata 是否齐全
+     （osd 是方向检测用的，官方完整版才有；精简版漏了它 --psm 0 会失败）
+  ④ 实跑：真的用 tesseract 识别 6 种格式的图，出不来字就是坏
 """
 import os
 import subprocess
@@ -90,8 +94,16 @@ def static_deps():
     chk("常见库的无版本号别名齐全", not miss2, "；".join(miss2[:4]))
 
 
+def langs_check():
+    print("\n--- ③ 语言包检查 ---")
+    td = os.path.join(PORT, "tessdata")
+    miss = [f for f in ("eng.traineddata", "chi_sim.traineddata", "osd.traineddata")
+            if not os.path.isfile(os.path.join(td, f))]
+    chk("eng / chi_sim / osd 语言包齐全", not miss, "缺 " + "、".join(miss))
+
+
 def runtime_check():
-    print("\n--- ③ 实跑检查（6 种格式）---")
+    print("\n--- ④ 实跑检查（6 种格式）---")
     exe = os.path.join(PORT, "tesseract.exe")
     if not chk("tesseract.exe 存在", os.path.isfile(exe)):
         return
@@ -147,6 +159,7 @@ def main():
     print(" 体积：%.1f MB，%d 个 DLL" % (size / 1048576, len(dlls)))
 
     static_deps()
+    langs_check()
     runtime_check()
 
     total = len(results)
