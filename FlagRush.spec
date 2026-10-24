@@ -48,9 +48,19 @@ datas = [
     (os.path.join(ROOT, "flag格式.txt"), "."),
     (os.path.join(ROOT, "app.ico"), "."),
     (os.path.join(ROOT, "app_icon_512.png"), "."),
-    # OCR 中文语言包（2.4MB，tessdata_fast 版）；英文包用 tesseract 自带的
-    (os.path.join(ROOT, "tools", "tessdata", "chi_sim.traineddata"), "tools/tessdata"),
 ]
+
+# OCR 便携版 tesseract（116MB 精简版）：tesseract.exe + 24 个必要 DLL
+# + eng/chi_sim 语言包。用 pefile 分析依赖树挑的可达 DLL，再逐个实测删掉
+# osd（10MB）/ OpenSSL（4.9MB）/ zstd（1.1MB）—— 删完中英文识别仍然正确。
+#
+# 只在本地存在时打包：开源仓库不含这个目录（二进制不进 git），
+# clone 后需要自己放一份，否则打出来的 exe 没有 OCR（其他功能不受影响）。
+_TESS = os.path.join(ROOT, "tools", "tesseract")
+if os.path.isdir(_TESS):
+    datas.append((_TESS, "tools/tesseract"))
+else:
+    print("[spec] 没找到 tools/tesseract，跳过 OCR 便携版（打包后没有 OCR 功能）")
 if os.path.isdir(CORE):
     datas.append((CORE, "core"))
 

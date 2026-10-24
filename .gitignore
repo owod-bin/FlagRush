@@ -58,3 +58,9 @@ _split/
 _位平面/
 _dct_out/
 _bits_out/
+
+# 打包时的临时目录（tesseract 精简过程产生）
+_tess*/
+
+# 打包时的临时目录（tesseract 精简过程产生）
+_tess*/
