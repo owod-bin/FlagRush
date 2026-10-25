@@ -344,6 +344,8 @@ def pcap(path, outdir=None):
                         continue
                     _seen_blobs.add(_h)
                     fn = os.path.join(outdir or ".", f"流量提取_{cnt}{real_ext}")
+                    if outdir:
+                        os.makedirs(outdir, exist_ok=True)
                     with open(fn, "wb") as f:
                         f.write(blob)
                     rep["files"].append(fn)

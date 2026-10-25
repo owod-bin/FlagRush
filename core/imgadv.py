@@ -680,6 +680,8 @@ def jsteg_embed(src, dst, message):
     """
     if not message:
         return False, "消息为空"
+    if isinstance(message, str):        # 传字符串也认（原来只吃 bytes，直接 TypeError）
+        message = message.encode("utf-8")
     meta = {}
     coeffs, info = jpeg_dct_coeffs(src, meta=meta)
     if not coeffs:

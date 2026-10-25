@@ -72,7 +72,9 @@ def main():
     log("\n[1/4] 外部工具")
     tools_dst = os.path.join(DIST, "tools")
     os.makedirs(tools_dst, exist_ok=True)
-    for name in ("7zip", "exiftool", "bkcrack", "upx", "hashcat"):
+    # ffmpeg 原来漏了：音频频谱图（mp3/m4a）全靠它，缺了之后
+    # 「音频频谱」在打包版里静默失效（纯 Python 版只认 wav）。
+    for name in ("7zip", "exiftool", "bkcrack", "upx", "hashcat", "ffmpeg"):
         copytree(os.path.join(ROOT, "tools", name), os.path.join(tools_dst, name), name)
 
     # 2) 文档 / 配置 / 目录

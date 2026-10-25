@@ -637,6 +637,7 @@ def carve(data, outdir, depth=0, log=None):
                 start = i + 1
                 continue
             fn = os.path.join(outdir, f"carved_{depth}_{name}_{i:08x}{ext}")
+            os.makedirs(outdir, exist_ok=True)
             with open(fn, "wb") as f:
                 f.write(blob)
             got.append((fn, name))

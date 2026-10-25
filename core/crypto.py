@@ -670,6 +670,36 @@ def _t_dna(s):
     comp = {"A": "T", "T": "A", "C": "G", "G": "C"}
     variants = [("DNA 密码", t), ("DNA 互补链", "".join(comp[c] for c in t))]
     out = []
+
+    # ---- 形式一：base-4 编码（CTF 里最常见）----
+    # 每个碱基 = 2 bit，4 个碱基 = 1 字节。映射有好几种写法，全试一遍。
+    # 原实现只有下面的「密码子表」（生物氨基酸），遇到 ACGT 编码的题
+    # 会解出 RAYDRSVRPRF 这种垃圾 —— 这是本轮审计发现的真实缺陷。
+    _B4 = [
+        ("DNA base4（A=00 C=01 G=10 T=11）", {"A": "00", "C": "01", "G": "10", "T": "11"}),
+        ("DNA base4（A=00 T=01 C=10 G=11）", {"A": "00", "T": "01", "C": "10", "G": "11"}),
+        ("DNA base4（A=00 G=01 C=10 T=11）", {"A": "00", "G": "01", "C": "10", "T": "11"}),
+        ("DNA base4（T=00 G=01 C=10 A=11）", {"T": "00", "G": "01", "C": "10", "A": "11"}),
+    ]
+    for name, m in _B4:
+        if len(t) % 4:
+            continue
+        try:
+            bits = "".join(m[c] for c in t)
+        except KeyError:
+            continue
+        raw = bytes(int(bits[i:i + 8], 2) for i in range(0, len(bits), 8))
+        if len(raw) < 4:
+            continue
+        try:
+            txt = raw.decode("utf-8")
+        except Exception:
+            txt = raw.decode("latin-1")
+        good = sum(1 for c in txt if 32 <= ord(c) < 127 or c in "\n\t")
+        if good / max(len(txt), 1) >= 0.9 and any(c.isalpha() for c in txt):
+            out.append((name, txt))
+
+    # ---- 形式二：密码子表（生物氨基酸）----
     for name, seq in variants:
         aa = [CODON.get(seq[i:i + 3], "?") for i in range(0, len(seq), 3)]
         txt = "".join(aa).replace("*", "")
@@ -703,9 +733,12 @@ def _t_element(s):
     t = s.strip()
     if len(t) < 3:
         return []
-    # 形式一：纯符号串，如 "HHeLiBe"
-    toks = re.findall(r"[A-Z][a-z]?", t)
-    if len(toks) >= 2 and "".join(toks) == t:
+    # 形式一：符号串，如 "HHeLiBe"，**允许空格/逗号/加号分隔**
+    # （原实现要求 "".join(toks) == t，也就是符号之间不能有任何分隔符；
+    #  实际题目几乎都是 "C Mg H N" 或 "C, Mg, H, N" 这种写法，于是一个都解不出）
+    t2 = re.sub(r"[\s,+/|·、;]+", " ", t).strip()
+    toks = re.findall(r"[A-Z][a-z]?", t2)
+    if len(toks) >= 2 and re.fullmatch(r"(?:[A-Z][a-z]? ?)+", t2):
         nums = [_SYM2NUM.get(x) for x in toks]
         if all(n is not None for n in nums):
             txt = "".join(chr(64 + (n % 26) if n % 26 else 90) for n in nums)
@@ -718,26 +751,46 @@ def _t_element(s):
     return []
 
 
+_TYPE7_KEY = "dsfd;kfoA,.iyewrkldJKDHSUB"      # Cisco 官方的固定密钥串（26 字节）
+
+
 def _t_type7(s):
-    """Cisco Type7 解密（异或 0x64 的固定算法，不是加密只是混淆）"""
+    """Cisco Type7 解密。
+
+    格式：前两位是**十进制**种子（00~15），后面每两位一个十六进制字节。
+    算法：明文[i] = 密文[i] ^ ord(KEY[(seed + i) % 26])
+
+    ★ 这里踩过一个大坑：原实现写成 `密文 ^ ((seed + j) % 256)` ——
+    拿数字去异或，而标准算法是拿**密钥串里的字符**去异或。
+    结果就是：任何真实的路由器配置密文都解不出来（实测 Cisco 文档里的
+    样例 `0822455D0A16` 应该解出 cisco，原实现出来是乱码）。
+
+    种子两位有十进制/十六进制两种写法（有的题用 0x10），两种都试一遍，
+    取能解出可打印字符的那个。
+    """
     t = re.sub(r"\s+", "", s)
-    if not re.fullmatch(r"[0-9A-Fa-f]{2,}", t) or len(t) < 4 or len(t) % 2:
+    if not re.fullmatch(r"[0-9A-Fa-f]{4,}", t) or len(t) % 2:
         return []
-    try:
-        seed = int(t[:2], 16)
-    except Exception:
-        return []
-    if seed > 52:
-        return []
-    out = []
-    for j, i in enumerate(range(2, len(t), 2), start=1):
-        out.append(int(t[i:i + 2], 16) ^ ((seed + j) % 256))
-    try:
-        r = bytes(out).decode("ascii")
-    except Exception:
-        return []
-    if r and all(32 <= ord(c) < 127 for c in r):
-        return [("Cisco Type7", r)]
+
+    def _try(seed):
+        out = []
+        for i in range(2, len(t), 2):
+            k = ord(_TYPE7_KEY[(seed + (i - 2) // 2) % len(_TYPE7_KEY)])
+            out.append(int(t[i:i + 2], 16) ^ k)
+        try:
+            r = bytes(out).decode("ascii")
+        except Exception:
+            return None
+        if r and all(32 <= ord(c) < 127 for c in r):
+            return r
+        return None
+
+    for seed in {int(t[:2], 10), int(t[:2], 16)}:
+        if seed > 52:
+            continue
+        r = _try(seed)
+        if r:
+            return [("Cisco Type7", r)]
     return []
 
 
@@ -795,18 +848,41 @@ def _t_baudot(s):
 
 
 def _t_gray(s):
-    """格雷码 → 二进制/十进制"""
+    """格雷码 → 二进制 → 文本。
+
+    格雷码（Gray code）相邻两数只差一位，CTF 里常把 ASCII 的每个字节
+    转成格雷码再拼成 0/1 串。原实现只把它转回二进制串就返回了，
+    等于「解了一半」—— 用户还得自己再去转 ASCII，实测端到端解不出 flag。
+    """
     t = re.sub(r"[^01]", "", s)
-    if len(t) < 4 or len(t) % 4:
+    if len(t) < 8:
         return []
-    out = []
-    for i in range(0, len(t), 4):
-        g = t[i:i + 4]
-        b = g[0]
-        for j in range(1, 4):
-            b += str(int(b[-1]) ^ int(g[j]))
-        out.append(b)
-    binstr = "".join(out)
+    # 先按 8 位一组还原（最常见），不足 8 位的倍数时再退回 4 位
+    for width in (8, 4):
+        if len(t) % width:
+            continue
+        bits = []
+        for i in range(0, len(t), width):
+            g = t[i:i + width]
+            b = g[0]
+            for j in range(1, width):
+                b += str(int(b[-1]) ^ int(g[j]))
+            bits.append(b)
+        binstr = "".join(bits)
+        if width == 8:
+            raw = bytes(int(b, 2) for b in bits)
+            try:
+                txt = raw.decode("utf-8")
+            except Exception:
+                txt = raw.decode("latin-1")
+            good = sum(1 for c in txt if 32 <= ord(c) < 127 or c in "\n\t")
+            if good / max(len(txt), 1) >= 0.9 and any(c.isalpha() for c in txt):
+                return [("格雷码", txt), ("格雷码→二进制", binstr)]
+        else:
+            # 4 位一组：当成 0~15 → A~P 的字母编号
+            txt = "".join(chr(65 + int(b, 2)) for b in bits if int(b, 2) < 26)
+            if txt and txt.isalpha():
+                return [("格雷码→4位字母", txt), ("格雷码→二进制", binstr)]
     return [("格雷码→二进制", binstr)]
 
 
@@ -815,14 +891,41 @@ def _t_bcd(s):
     t = re.sub(r"[^01]", "", s)
     if len(t) < 8 or len(t) % 4:
         return []
-    nums = []
+    nib = []
     for i in range(0, len(t), 4):
         b = t[i:i + 4]
         if not re.fullmatch(r"[01]{4}", b):
             return []
-        nums.append(int(b, 2))
-    txt = "".join(chr(n) if 32 <= n < 127 else "[%d]" % n for n in nums)
-    return [("BCD 码", txt)]
+        nib.append(int(b, 2))
+    # BCD 的每个 4bit 是**十进制位**（0-9）。原实现直接 chr(6) 这种，
+    # 输出 "[6][6][6][12]..." 这种垃圾 —— 等于这个功能从来没work过。
+    if any(n > 9 for n in nib):
+        return []
+    digits = "".join(str(n) for n in nib)
+    # 每个字节的十进制位数不固定（97 是 2 位、102 是 3 位），所以不能按固定
+    # 宽度切 —— 用 DP 从后往前找一条「每段 2~3 位且都是可打印 ASCII」的切分。
+    n = len(digits)
+    if n > 900:
+        return []
+    nxt = [None] * (n + 1)
+    nxt[n] = n
+    for i in range(n - 1, -1, -1):
+        for w in (3, 2):                       # 优先 3 位（ASCII 100~127 只能 3 位）
+            j = i + w
+            if j <= n and nxt[j] is not None:
+                v = int(digits[i:j])
+                if 32 <= v < 127:
+                    nxt[i] = j
+                    break
+    if nxt[0] is None:
+        return []
+    out = []
+    i = 0
+    while i < n:
+        j = nxt[i]
+        out.append(chr(int(digits[i:j])))
+        i = j
+    return [("BCD 码", "".join(out))]
 
 
 def _t_ascii_shift(s):
@@ -907,13 +1010,57 @@ def _t_b64_custom(s):
     return out
 
 
+_BB_V = "aeiouy"
+_BB_C = "bcdfghklmnprstvzx"
+
+
 def _t_bubble(s):
-    """Bubble Babble 解码（形如 xexax-xexax-...）"""
+    """Bubble Babble 解码（形如 xexax / xigak-luv...x）。
+
+    原实现只做「识别」不解码，等于这个功能没用。按官方 C 实现
+    （bubblebabble.c）补全：
+      编码：每 2 字节 → v1 c1 v2 c2 '-' c3（v=vowel, c=consonant）
+            最后一个奇数字节 → v1 c1 v2 'x' v3（v3 是校验）
+            空数据 → 'e' 'x' 'a'，所以空串是 xexax
+    """
     t = s.strip()
-    if not re.fullmatch(r"[a-z]{5}(-[a-z]{5})*", t):
+    if len(t) < 5 or not t.startswith("x") or not t.endswith("x"):
         return []
-    # Bubble Babble 太冷门，只做识别提示，不实现完整解码
-    return [("Bubble Babble（识别）", "形如 xesef-disof-getry 的格式，需专用工具解")]
+    if not re.fullmatch(r"[a-z\-]+", t):
+        return []
+    body = t[1:-1]
+    out = bytearray()
+    seed = 1
+    i = 0
+    try:
+        while i < len(body):
+            v1 = _BB_V.index(body[i])
+            c1 = _BB_C.index(body[i + 1])
+            v2 = _BB_V.index(body[i + 2])
+            i += 3
+            if c1 == 16:                       # 空数据终止符
+                break
+            b1 = (((v1 - seed) % 6) << 6) | (c1 << 2) | ((v2 - (seed // 6)) % 6)
+            if i < len(body) and body[i] == _BB_C[16]:
+                out.append(b1)                 # 最后一个奇数字节
+                break
+            if i + 2 >= len(body) or body[i + 1] != "-":
+                return []
+            c2 = _BB_C.index(body[i])
+            c3 = _BB_C.index(body[i + 2])
+            i += 3
+            b2 = (c2 << 4) | c3
+            out += bytes([b1, b2])
+            seed = (seed * 5 + b1 * 7 + b2) % 36
+    except (ValueError, IndexError):
+        return []
+    if not out:
+        return []
+    try:
+        txt = bytes(out).decode("utf-8")
+    except Exception:
+        txt = bytes(out).decode("latin-1")
+    return [("Bubble Babble", txt)]
 
 
 def _t_dvorak(s):
@@ -923,11 +1070,25 @@ def _t_dvorak(s):
     # QWERTY 字母键按物理位置：q w e r t y u i o p a s d f g h j k l z x c v b n m（26 个）
     # 「在 Dvorak 布局上按出了 QWERTY 的键位」→ 看到的字符是 QWERTY 标签，
     # 真实意图是该物理位置的 Dvorak 输出，所以反向映射。
-    DVORAK_OUT = "pyfgcrlaoeuidhtnsqjkxbmwvz"      # 物理位置 → Dvorak 输出
-    QWERTY_LABEL = "qwertyuiopasdfghjklzxcvbnm"     # 物理位置 → QWERTY 标签
-    tbl = str.maketrans(QWERTY_LABEL, DVORAK_OUT)
+    # ★ 原表只列了字母，把标点丢了 —— 但 Dvorak 的字母位置是「按物理位置」
+    #   对应的，丢一个标点后面全体错位（实测 'unaid' 解出 'lvuad' 而不是 'flag'）。
+    #   必须按整行完整对照（US 布局）：
+    #     QWERTY: `1234567890-=  qwertyuiop[]\  asdfghjkl;'  zxcvbnm,./
+    #     Dvorak: `1234567890[]  ',.pyfgcrl/=   aoeuidhtns-   ;qjkxbmwvz
+    _Q = ("`1234567890-=" "qwertyuiop[]\\" "asdfghjkl;'" "zxcvbnm,./")
+    # 注意 Dvorak 的字母行只有 12 个键（第 13 个位置的反斜杠不变）
+    _D = ("`1234567890[]" "',.pyfgcrl/=\\" "aoeuidhtns-" ";qjkxbmwvz")
+    tbl = str.maketrans(_Q, _D)
     t = s.strip()
-    if len(t) < 4 or not re.fullmatch(r"[A-Za-z ,.'/;=\-]+", t):
+    if len(t) < 4 or not re.fullmatch(r"[A-Za-z0-9 `\[\]\\,.'/;=\-]+", t):
+        return []
+    # ★ 必须带「编码里不会出现的字符」才算 Dvorak 文本：空格 / 逗号 / 句点 /
+    #   分号 / 撇号。base64 只有 +/=，base32 只有 A-Z2-7，hex 只有 0-9a-f，
+    #   它们都过不了这一关。
+    #   为什么必须加：不加的话，任何 base32/base64 中间结果都会被 Dvorak
+    #   再"翻译"一次，凭空多出一层候选，把正确链路挤出 beam ——
+    #   实测 selftest 的三轮链（base64→caesar5→base32）直接解不出来了。
+    if not re.search(r"[ ,.;']", t):
         return []
     r = t.translate(tbl)
     if r != t:
@@ -3767,8 +3928,16 @@ def _analyze_uncached(text, max_depth=8):
                                "按 esolang 直接执行")]}
 
     # ---- 哈希模式：不可逆，只能校验或爆破
+    #
+    # ★ 但「给了 key=」时不能走这条路：32 位十六进制既可能是 MD5，
+    #   也可能是 AES-128 的密文（DES 8 字节、AES 16 字节都长这样）。
+    #   原实现只要 hash_verify() 认出来就直接 return，密钥解密根本没机会跑 ——
+    #   用户贴「AES 密文 + key=」得到的是「这是 MD5 哈希，单向不可解密」，
+    #   等于 AES / DES / RC4 这几条路全被一个长度判断挡死了。
+    #   现在：有 key= 就先去解密，解不出来再把哈希提示补在 notes 里。
     hv = hash_verify(text)
-    if hv:
+    _has_key = bool(re.search(r"(?i)(?:^|[\s,;])key\s*=", text))
+    if hv and not _has_key:
         name = HASH_TIPS.get(len(hv["hash"]), ("未知", ""))[0]
         notes = [("这是 %s 哈希（%d 位十六进制）" % (name, len(hv["hash"])),
                   "哈希是单向的，不能解密")]
@@ -3833,6 +4002,14 @@ def _analyze_uncached(text, max_depth=8):
                 "elapsed": hc["elapsed"], "hash_only": h, "hash_cracked": hc["plain"]}
 
     notes = identify(text)
+
+    # 刚才因为有 key= 而跳过的哈希提示，在这里补回来（解不出密文时至少给个方向）
+    if hv and not (r.get("hits") or r.get("results")):
+        _hname = HASH_TIPS.get(len(hv["hash"]), ("未知", ""))[0]
+        notes.insert(0, ("另外：这段十六进制也像 %s 哈希（%d 位）"
+                         % (_hname, len(hv["hash"])), "哈希单向不可逆，只能爆破"))
+        if hv.get("match"):
+            notes.insert(0, ("★ 校验通过：%s 就是它的明文" % hv["cand"], "已确认"))
 
     # ---- 短输出变换的补充提示
     # 猪圈/NATO/DNA/元素周期表/格雷码/BCD 这类解出来只有 5~12 个字符，

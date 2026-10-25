@@ -348,8 +348,16 @@ _DIANMA_BUILTIN = {
 }
 
 
+_DIANMA_CACHE = [None]
+
+
 def _load_dianma_table():
-    """加载用户自定义电码表（data/dianma_table.txt），格式：0022 中"""
+    """加载用户自定义电码表（data/dianma_table.txt），格式：0022 中
+
+    同样必须缓存（理由见 _load_bihua_table）：A* 里会被调用上千次。
+    """
+    if _DIANMA_CACHE[0] is not None:
+        return _DIANMA_CACHE[0]
     import os
     tbl = dict(_DIANMA_BUILTIN)
     for p in (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -362,6 +370,7 @@ def _load_dianma_table():
                         tbl.setdefault(line[:4], line[5])
         except Exception:
             pass
+    _DIANMA_CACHE[0] = tbl
     return tbl
 
 
@@ -406,7 +415,18 @@ _BIHUA_BUILTIN = {
 }
 
 
+_BIHUA_CACHE = [None]
+
+
 def _load_bihua_table():
+    """笔画码表（内置 + data/bihua_table.txt）。
+
+    ★ 必须缓存：这个函数在 A* 搜索里每层每个候选都会被调用一次
+      （实测单条用例 8325 次），每次都 open + stat 一遍磁盘，
+      光这一项就吃掉 1.8 秒，把 analyze 顶到 8 秒超时上限。
+    """
+    if _BIHUA_CACHE[0] is not None:
+        return _BIHUA_CACHE[0]
     import os
     tbl = dict(_BIHUA_BUILTIN)
     p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -419,6 +439,7 @@ def _load_bihua_table():
                     tbl.setdefault(line[0], line[1:])
     except Exception:
         pass
+    _BIHUA_CACHE[0] = tbl
     return tbl
 
 

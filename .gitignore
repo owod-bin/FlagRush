@@ -71,3 +71,13 @@ _tess*/
 # 提交信息临时文件
 _cm.txt
 _msg.txt
+
+# 测试/调试临时文件
+_ca*.log
+_fm.log
+_ep.log
+_st.log
+_sweep_tmp/
+_rsa_cases.pkl
+_v.py
+_c_*.py

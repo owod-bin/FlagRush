@@ -199,6 +199,10 @@ def spectrogram(path, outdir=None, win=1024, hop=512, height=400):
     png = _png(cols, height, rows)
     base = os.path.splitext(os.path.basename(path))[0]
     dst = os.path.join(outdir or os.path.dirname(os.path.abspath(path)), base + "_频谱.png")
+    # 输出目录可能还不存在（misc.analyze 传进来的 outdir 是临时建的），
+    # 不 makedirs 会 FileNotFoundError —— 而 misc 那边是 except: pass，
+    # 用户看到的就是「拖了音频，什么都没生成、也没报错」。
+    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     with open(dst, "wb") as f:
         f.write(png)
     return True, dst, f"{rate}Hz / {ch}声道 / {bits}bit"

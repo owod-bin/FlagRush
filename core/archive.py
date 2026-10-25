@@ -118,6 +118,7 @@ def repair_header(path, data, outdir=None):
            "BMP": ".bmp", "PDF": ".pdf"}.get(guess, ".bin")
     dst = os.path.join(outdir, base + "_修复" + ext)
     try:
+        os.makedirs(outdir, exist_ok=True)
         with open(dst, "wb") as f:
             f.write(fixed)
     except Exception as e:

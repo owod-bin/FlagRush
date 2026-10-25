@@ -54,6 +54,30 @@ def _lines_misc(path):
     _record_outdir(out)
     t = time.time()
     rep = misc.analyze(path, out, deep=True, verbose=False)
+
+    # 把本次生成的产物（位平面 / 频谱 / GIF 帧 / 雕刻文件…）收集起来。
+    # 不收集的话：网页版右侧「下载」是空的，用户只看到文字说
+    # 「已生成 xxx_频谱.png」，却不知道去哪儿点 —— 实测就是这样。
+    try:
+        _dirs = [out] + [os.path.join(out, d) for d in
+                         ("_位平面", "_carved", "_traffic", "_spectro",
+                          "_extract", "_split", "_nested", "L1", "L2", "L3", "L4")]
+        _gen = []
+        for _d in _dirs:
+            if not os.path.isdir(_d):
+                continue
+            for _fn in sorted(os.listdir(_d)):
+                _p = os.path.join(_d, _fn)
+                try:
+                    if os.path.isfile(_p) and os.path.getmtime(_p) >= t - 1.0:
+                        _gen.append(_p)
+                except OSError:
+                    continue
+        if _gen:
+            _TL.files = _gen[:60]
+    except Exception:
+        pass
+
     L, flags = [], []
 
     def add(s, tag=""):
@@ -676,6 +700,24 @@ def run(panel, value, timeout=60):
             if f and f not in seen:
                 seen.add(f)
                 uf.append(f)
+
+        # 兜底提取：有些面板只是把结果**打印在正文里**（JWT 的 payload、
+        # 证书字段、解码出的明文…），没有自己收集 flag，于是顶部显示
+        # 「没找到 flag」，正文里却明明写着 —— 用户会以为功能坏了。
+        # 这里统一扫一遍正文，把漏掉的补进 flags。
+        # 跳过 dim/h（提示与标题）和占位符，避免把说明文字里的示例当成结果。
+        try:
+            import flagfmt as _ff
+            for _text, _tag in lines:
+                if not _text or _tag in ("dim", "h", "err"):
+                    continue
+                for _g in _ff.extract(str(_text)):
+                    if _g in seen or _g == "flag{...}":
+                        continue
+                    seen.add(_g)
+                    uf.append(_g)
+        except Exception:
+            pass
         return {"ok": True, "lines": lines, "sections": to_sections(lines),
                 "flags": uf, "error": "", "files": getattr(_TL, "files", []),
                 "uploads": getattr(_TL, "uploads", []),

@@ -176,6 +176,7 @@ def gif_frames(path, outdir=None, max_frames=40):
         for y in range(h):
             if top + y < sh:
                 canvas[top + y][left * 3:(left + w) * 3] = rows[y]
+        os.makedirs(outdir, exist_ok=True)      # outdir 可能是临时目录，没建就崩
         dst = os.path.join(outdir, f"{base}_帧{idx + 1:02d}.png")
         write_png(dst, sw, sh, [bytes(r) for r in canvas])
         frames.append(dst)

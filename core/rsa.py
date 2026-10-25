@@ -162,6 +162,24 @@ def parse(text):
             groups.append((int(mn.group(1)), int(mc.group(1))))
     if len(groups) >= 2:
         out["groups"] = groups
+    # 共模攻击的题目几乎都写成 e1= / c1= / e2= / c2=（下标从 1 开始），
+    # 而上面只认 e= / c=，于是「共模」这条攻击永远凑不齐参数、从来不会触发。
+    if "e" not in out:
+        m = re.search(r"\be1\s*[=:]\s*(\d+)", t, re.I)
+        if m:
+            out["e"] = int(m.group(1))
+    if "c" not in out:
+        m = re.search(r"\bc1\s*[=:]\s*(\d+)", t, re.I)
+        if m:
+            out["c"] = int(m.group(1))
+
+    # 只给了 p、q 没给 n（很常见）：直接补 n = p*q，
+    # 否则下面会因为「没找到 n」直接返回，用户明明给了因子却什么也算不出来。
+    if "n" not in out and out.get("p") and out.get("q"):
+        try:
+            out["n"] = int(out["p"]) * int(out["q"])
+        except Exception:
+            pass
     # 没有 key=value，就按出现顺序当 n, e, c
     if "n" not in out and "groups" not in out:
         nums = [int(x) for x in re.findall(r"\b\d{2,}\b", t)]
@@ -191,22 +209,55 @@ def iroot(x, k):
     return lo
 
 
-def pollard_rho(n, rounds=6):
-    """Pollard rho 分解中等大小的 n（比试除快得多）"""
+def pollard_rho(n, rounds=8, time_limit=1.5):
+    """Pollard rho（Brent 变体）分解中等大小的 n。
+
+    **必须有硬性时间上限**：原来的版本没有上限，遇到 128bit 半素数
+    （两个 64bit 因子）时会一直算下去 —— 期望迭代 2^32 次，Python 里等于卡死。
+    实测 RSA 面板对 n=127bit 的输入直接挂住 >90 秒，用户看到的就是「点了没反应」。
+
+    Brent 变体比原始 Floyd 版快 20~30%，配合 time_limit 后：
+      · 80bit 以内（因子 < 2^40）通常 0.1 秒内出结果
+      · 更大的直接放弃，交给 Fermat / 已知因子等有针对性的攻击
+    """
     if n % 2 == 0:
         return 2
+    if n % 3 == 0:
+        return 3
     import random
+    t0 = time.time()
     for _ in range(rounds):
+        if time.time() - t0 > time_limit:
+            return None
+        y = random.randrange(1, n)
         c = random.randrange(1, n)
-        x = random.randrange(0, n)
-        y, d = x, 1
-        while d == 1:
-            x = (x * x + c) % n
-            y = (y * y + c) % n
-            y = (y * y + c) % n
-            d = math.gcd(abs(x - y), n)
-        if d != n:
-            return d
+        m = 128
+        g = r = q = 1
+        ys = y
+        while g == 1:
+            x = y
+            for _ in range(r):
+                y = (y * y + c) % n
+            k = 0
+            while k < r and g == 1:
+                ys = y
+                for _ in range(min(m, r - k)):
+                    y = (y * y + c) % n
+                    q = (q * abs(x - y)) % n
+                g = gcd(q, n)
+                k += m
+                if time.time() - t0 > time_limit:
+                    return None
+            r <<= 1
+        if g == n:
+            g = 1
+            while g == 1:
+                ys = (ys * ys + c) % n
+                g = gcd(abs(x - ys), n)
+                if time.time() - t0 > time_limit:
+                    return None
+        if 1 < g < n:
+            return g
     return None
 
 
@@ -281,7 +332,10 @@ def attack_trial_division(n, e, c, limit=2_000_000):
                 p = d
                 break
             d += 2
-    if not p and n.bit_length() <= 140:
+    # 只在「因子足够小」时才上 rho：80bit 以内的半素数因子 < 2^40，
+    # Brent 一般 0.1 秒内出结果；再大就不是 rho 能解决的范围了，
+    # 硬算只会让面板卡死（原来上限写 140bit，等于没有上限）。
+    if not p and n.bit_length() <= 90:
         p = pollard_rho(n)
     if not p or p in (1, n):
         return None
@@ -477,18 +531,32 @@ def analyze(text):
     attacks = []
     if e == 1 and c is not None:
         attacks.append(("e=1 直接解密", try_text(int_to_bytes(c)), None))
+
+    # 总时间预算：整个攻击链最多 8 秒，超了就跳过剩下的并明确告诉用户。
+    # 为什么需要：分解类攻击（rho / Fermat）在某些 n 上天然跑不完，
+    # 没有总预算的话面板会一直转圈，用户以为工具死了。
+    _t_start = time.time()
+    _BUDGET = 8.0
+    _skipped = []
+
+    def _ap(name, fn, *a):
+        if time.time() - _t_start > _BUDGET:
+            _skipped.append(name)
+            return None
+        return fn(*a)
+
     if n and e and c is not None:
-        attacks.append(attack_small_e(n, e, c))
-        attacks.append(attack_trial_division(n, e, c))
-        attacks.append(attack_fermat(n, e, c))
-        attacks.append(attack_known_factors(n, e, c, P.get("p"), P.get("q")))
-        attacks.append(attack_dp_leak(n, e, c, P.get("dp")))
-        attacks.append(attack_wiener(n, e, c))
-        attacks.append(attack_shared_prime(n, P.get("n2"), e, c))
+        attacks.append(_ap("小 e", attack_small_e, n, e, c))
+        attacks.append(_ap("试除/rho", attack_trial_division, n, e, c))
+        attacks.append(_ap("费马", attack_fermat, n, e, c))
+        attacks.append(_ap("已知因子", attack_known_factors, n, e, c, P.get("p"), P.get("q")))
+        attacks.append(_ap("dp 泄露", attack_dp_leak, n, e, c, P.get("dp")))
+        attacks.append(_ap("Wiener", attack_wiener, n, e, c))
+        attacks.append(_ap("共因子", attack_shared_prime, n, P.get("n2"), e, c))
         if P.get("e2") and P.get("c2"):
-            attacks.append(attack_common_modulus(n, e, c, P["e2"], P["c2"]))
+            attacks.append(_ap("共模", attack_common_modulus, n, e, c, P["e2"], P["c2"]))
         if groups:
-            attacks.append(attack_hastad(groups, e))
+            attacks.append(_ap("Håstad", attack_hastad, groups, e))
 
         # ---- Franklin-Reiter 相关消息（需要 c2 + r）
         r_val = P.get("r") or P.get("delta")
@@ -520,6 +588,11 @@ def analyze(text):
                     L.append("Coppersmith：%s" % note)
             except Exception as _e:
                 L.append("Coppersmith 跳过：%s" % _e)
+
+    if _skipped:
+        L.append("（超过 8 秒预算，跳过：%s —— 这些攻击对这个 n 本来也很难成功）"
+                 % "、".join(_skipped))
+        L.append("")
 
     ok = [a for a in attacks if a]
     rep["results"] = ok
