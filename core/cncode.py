@@ -122,6 +122,11 @@ def ganzhi_decode(s):
     """
     t = s.strip()
     out = []
+    # 先去掉分隔符：实际题目常写「甲子 乙丑 丙寅」或「甲子,乙丑」，
+    # 原实现只认「甲子乙丑丙寅」这种连写，带分隔符就一个都解不出。
+    t2 = re.sub(r"[\s,，、+/|]+", "", t)
+    if t2 != t and t2 and all(c in GAN or c in ZHI for c in t2) and len(t2) % 2 == 0:
+        t = t2
     # 纯干支串（偶数长度，逐字都是干或支）
     if t and all(c in GAN or c in ZHI for c in t) and len(t) % 2 == 0:
         pairs = [t[i:i + 2] for i in range(0, len(t), 2)]
@@ -136,6 +141,11 @@ def ganzhi_decode(s):
                 nums.append(n)
             if ok and nums:
                 out.append(("干支->序号", " ".join(str(n) for n in nums)))
+                # 序号都在 1~26 时，基本就是「干支 → 数字 → 字母」的题，
+                # 直接给出字母，省得用户再手动过一道 A1Z26。
+                if all(1 <= n <= 26 for n in nums):
+                    out.append(("干支->序号->字母",
+                                "".join(chr(64 + n) for n in nums)))
     # 数字 -> 干支（按分隔符拆，也支持 "12345" 这种连写）
     d = re.findall(r"\d+", t)
     if d and len(d) >= 2:

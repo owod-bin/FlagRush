@@ -807,7 +807,15 @@ def _t_deadfish(s):
         elif c == "d":
             v -= 1
         elif c == "s":
+            # ★ 平方指令会让 v 指数膨胀（v *= v 反复几次就是几百万位的大整数），
+            #   而 Python 的大整数乘法是 O(n^1.58) —— 实测一个含大量 s 的输入
+            #   能把 analyze 卡死 100 秒以上（8 秒时限都拦不住，因为卡在单次乘法里）。
+            #   真实 Deadfish 程序的值只在 0~256 附近，超过 2^20 直接放弃。
+            if abs(v) > (1 << 20):
+                return []
             v *= v
+            if abs(v) > (1 << 20):
+                return []
         else:
             if v == -1 or v == 256:
                 v = 0

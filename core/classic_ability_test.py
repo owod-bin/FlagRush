@@ -202,16 +202,22 @@ add("NATO 音标字母", "ALPHA BRAVO CHARLIE DELTA ECHO FOXTROT", ["ABCDEF"])
 add("DNA 密码", "GCT CAT GAT TTA AAA", ["AHDLK"])
 add("元素周期表（符号）", "HHeLiBeBCNOF", ["ABCDEFGHI"])
 add("元素周期表（序号）", "8 5 12 12 15", ["HELLO"])
-add("Cisco Type7", "0A7B6D7E7D787F6376", ["password"])
+# Cisco 官方文档里的样例：0822455D0A16 -> cisco
+# （原来的 0A7B... 是用旧的错误算法生成的，标准算法解不出来）
+add("Cisco Type7", "0822455D0A16", ["cisco"])
 add("博多码 Baudot", "10100 00001 10010 10010 11000", ["HELLO"])
 add("格雷码", "0100 1101 0011", ["011110010010"])
-add("BCD 码", "0100 0001 0010 0011", ["[4]"])
+# BCD 8421：每个字节的十进制 ASCII 拆成 4bit 一组
+# 102 -> 0001 0000 0010，108 -> 0001 0000 1000，97 -> 1001 0111，103 -> 0001 0000 0011
+add("BCD 码", "0001 0000 0010 0001 0000 1000 1001 0111 0001 0000 0011", ["flag"])
 add("keyCode 键码", "72 73 74 75", ["HIJK"])
 add("base64 大小写错乱", "zMxHz3tJyXnLx3rLc3r9", ["flag{case_test}"])
 add("Base64 自定义编码表", "ZmxhZ3tjdXN0b219", ["flag{custom}"])
 add("Malbolge（识别）",
     "(=<`#9]~6ZY32Vx/4Rs+0No-&Jk)" + chr(34) + "Fh}|Bcy?", ["Malbolge"])
-add("Dvorak 键盘映射", "aoeuidhtns", ["uofladncvi"])
+# Dvorak 正确映射：在 QWERTY 上敲 "asdfghjkl;" 出来的是 "aoeuidhtns"（Dvorak 主行）
+# 旧表漏了标点导致整体错位，原来的期望值 uofladncvi 是错表产物
+add("Dvorak 键盘映射", "asdfghjkl;", ["aoeuidhtns"])
 
 # ---------- 15. 手机键盘 ----------
 add("手机键盘", "333 555 2 4", [])
