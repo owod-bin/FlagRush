@@ -599,8 +599,15 @@ CARVE_SIGS = [
 ]
 
 
-def carve(data, outdir, depth=0, log=None):
-    """把文件里内嵌的其它文件切出来，返回 [(路径, 类型)]"""
+def carve(data, outdir, depth=0, log=None, allow_start=False):
+    """把文件里内嵌的其它文件切出来，返回 [(路径, 类型)]。
+
+    allow_start：允许从偏移 0 就开始切。
+      默认 False —— 分析一个真实文件时，开头就是它自己，切出来没意义。
+      但「从 LSB / 文本块 base64 还原出来的字节流」正好相反：整个流就是一个
+      完整文件，文件头就在 0 —— 不打开这个开关，PK\x03\x04 在偏移 0 会被跳过，
+      结果就是「发现了内嵌 ZIP，却一个文件也切不出来」（实测）。
+    """
     got = []
     if depth > 3 or len(data) < 64:
         return got
@@ -612,7 +619,7 @@ def carve(data, outdir, depth=0, log=None):
             i = data.find(sig, start)
             if i < 0:
                 break
-            if i == 0:
+            if i == 0 and not allow_start:
                 start = i + 1
                 continue  # 开头就是文件自己，跳过（递归时也一样）
             end = len(data)
@@ -629,6 +636,14 @@ def carve(data, outdir, depth=0, log=None):
             elif ext == ".gif":
                 j = data.find(b"\x3b", i)
                 end = j + 1 if j > 0 else min(len(data), i + MAX_CARVE)
+            elif ext == ".zip":
+                # 切到 EOCD（含注释）为止，否则后面填充的零会一起带上
+                j = data.find(b"PK\x05\x06", i)
+                if j > 0 and j + 22 <= len(data):
+                    clen = struct.unpack_from("<H", data, j + 20)[0]
+                    end = min(len(data), j + 22 + clen)
+                else:
+                    end = min(len(data), i + MAX_CARVE)
             else:
                 end = min(len(data), i + MAX_CARVE)
             blob = data[i:end]
@@ -675,6 +690,14 @@ def dig_carved(fn, name, outdir, rep, depth=0, seen=None):
                 rep["flags"] += [x.decode("utf-8", "ignore") for x in h2]
         except Exception:
             pass
+    # 雕出来的图片：图里套图 / 图里套 zip 再套图，flag 常写在这张图上
+    if sub[:8] == b"\x89PNG\r\n\x1a\n" or sub[:2] in (b"\xff\xd8", b"BM") \
+            or sub[:6] in (b"GIF87a", b"GIF89a"):
+        try:
+            _ocr_image(fn, rep, "雕刻图")
+        except Exception:
+            pass
+
     # ZIP：解压后逐个看
     elif name == "ZIP" or sub[:2] == b"PK":
         try:
@@ -932,10 +955,13 @@ def _png_chunk(typ, body):
             struct.pack(">I", zlib.crc32(typ + body) & 0xFFFFFFFF))
 
 
-def png_repair(path, data, outdir=None):
+def png_repair(path, data, outdir=None, rep=None):
     """
     修复被改过宽高的 PNG（CTF 超高频：改高度把 flag 藏在下面几行）。
-    原理：IDAT 解压后的原始像素数据长度是固定的，用「长度 ÷ 每行字节数」反推真实高度。
+    原理：IDAT 解压后的原始像素数据长度是固定的 ——
+      · 高度被改：长度 ÷ 每行字节数 = 真实行数；
+      · 宽度被改：按声明宽度除不尽（或每行开头的 filter 字节不是 0~4），
+        就用「长度能整除 + filter 字节合法」反推真实宽度。
     返回 (说明文字, 修复后路径) 或 None
     """
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -958,12 +984,61 @@ def png_repair(path, data, outdir=None):
         return ("IDAT 解压失败，图片数据可能被改坏（不是单纯改高度）", None)
     if not row:
         return None
+
+    orig_w, orig_h = w, h
     real_h, rem = divmod(len(raw), row)
-    if real_h == h and rem == 0:
-        return None                      # 高度是对的，不用修
+
+    # ★ 宽度也可能被改过（比改高度少见，但一样高频）。
+    #   判据：按声明宽度除不尽，或者每行第一个字节不是 0~4
+    #   （PNG 规范里 filter 只有 0~4 五种，改错宽度后这个位置就是像素数据，几乎必然越界）。
+    #   满足任一条就用「长度整除 + filter 合法」把真实宽度扫出来。
+    bad_filter = real_h > 0 and any(raw[i * row] > 4 for i in range(min(real_h, 128)))
+    if rem or bad_filter:
+        total = len(raw)
+
+        def _filters_ok(row2, h2):
+            step = max(1, h2 // 256)
+            return all(raw[i * row2] <= 4 for i in range(0, h2, step))
+
+        best = None
+        # ① 先假设「只有宽度被改」（远多于宽高都改）：
+        #    高度不变 → 每行字节数 = 总长 ÷ 原高，反推宽度。唯一解，最可靠。
+        if orig_h and total % orig_h == 0:
+            row2 = total // orig_h
+            if row2 > 1 and (row2 - 1) % bpp == 0:
+                w2 = (row2 - 1) // bpp
+                if 1 <= w2 <= 100000 and w2 != orig_w and _filters_ok(row2, orig_h):
+                    best = (0, w2, orig_h)
+        # ② 宽高都可能改：枚举能整除的宽度，用 filter 字节筛。
+        #    注意纯色图整幅都是 0（Sub/Up 滤波后全是差值 0），
+        #    filter 校验会放过很多假解，所以这一路只作兜底。
+        if best is None:
+            for w2 in range(1, min(8192, total // max(bpp, 1)) + 1):
+                row2 = 1 + w2 * bpp
+                if total % row2:
+                    continue
+                h2 = total // row2
+                if not (1 <= h2 <= 50000):
+                    continue
+                if _filters_ok(row2, h2):
+                    score = abs(w2 - orig_w) + abs(h2 - orig_h) * 0.5
+                    if best is None or score < best[0]:
+                        best = (score, w2, h2)
+        if best:
+            _, w, real_h = best
+            row = 1 + w * bpp
+            rem = 0
+
+    if w == orig_w and real_h == orig_h and rem == 0:
+        return None                      # 尺寸是对的，不用修
     if real_h <= 0:
         return None
-    # 重建：换掉 IHDR 的高度 + 重算 CRC，其它块原样保留
+    if rem:
+        # 除不尽又反推不出宽度：别写一个坏文件出去，直接说清楚
+        return ("PNG 的 IDAT 长度对不上任何整数尺寸（多出 %d 字节），"
+                "宽高可能都被改过或数据被裁剪，自动修复失败" % rem, None)
+
+    # 重建：换掉 IHDR 的宽高 + 重算 CRC，其它块原样保留
     new_ihdr = struct.pack(">IIBBBBB", w, real_h, bd, ct, comp, filt, inter)
     out = bytearray(b"\x89PNG\r\n\x1a\n")
     for typ, body, _ in chunks:
@@ -976,8 +1051,22 @@ def png_repair(path, data, outdir=None):
                        os.path.basename(base) + "_修复.png")
     with open(dst, "wb") as f:
         f.write(bytes(out))
-    msg = (f"★ PNG 高度被改过：文件里写 {h}，实际数据是 {real_h} 行"
-           f"（{w}×{real_h}，多出 {rem} 字节）—— 已生成修复版")
+    # ★ 修复版才是「完整图片」：被裁掉的那几行就在这里，flag 常写在上面。
+    #   原来只把修复版做了 LSB，没做 OCR/二维码 —— 用户看到「已生成修复版」
+    #   却看不到 flag，等于这个功能只修不认。
+    if rep is not None:
+        try:
+            _ocr_image(dst, rep, "修复版")
+        except Exception:
+            pass
+
+    diffs = []
+    if w != orig_w:
+        diffs.append("宽 %d → %d" % (orig_w, w))
+    if real_h != orig_h:
+        diffs.append("高 %d → %d" % (orig_h, real_h))
+    msg = ("★ PNG 尺寸被改过（%s）：文件里写 %d×%d，实际数据是 %d×%d —— 已生成修复版"
+           % ("，".join(diffs) or "仅 CRC", orig_w, orig_h, w, real_h))
     return (msg, dst)
 
 
@@ -1032,6 +1121,68 @@ def zip_repair(path, data, outdir=None):
     return (f"★ ZIP 伪加密：清掉 {fixed} 处加密位，已生成可直接解压的副本", dst, len(names))
 
 
+# ---------------------------------------------------------------- OCR / 二维码
+
+_OCR_SEEN = set()
+_OCR_MAX = 6                      # 一次分析最多 OCR 几张图（每张 0.5~1.5 秒）
+
+
+def _ocr_image(p, rep, tag=""):
+    """对一张图片做「二维码 + OCR 文字识别」，结果写进 rep。
+
+    为什么必须抽成函数、并且对**每一份衍生图**都调用：
+      · 改高度藏 flag —— flag 只出现在修复版里，原图被裁掉了下半部分；
+      · 文件头被改坏 —— 原图 PIL/tesseract 都打不开，只有补头后的版本能看；
+      · 图里套图 / 图里套 zip 再套图 —— flag 只在雕出来、解出来的那张图上。
+    原来只对「用户给的那一个文件」跑一次 OCR，上面三种全都会漏
+    （实测改高度 + 图上写 flag，flags 是空的）。
+
+    同一个路径只跑一次；总数超过 _OCR_MAX 就停，避免一堆小图把时间吃光。
+    """
+    if not p or not os.path.isfile(p):
+        return
+    key = os.path.abspath(p)
+    if key in _OCR_SEEN:
+        return
+    try:
+        with open(p, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        return
+    if not (head[:8] == b"\x89PNG\r\n\x1a\n" or head[:2] in (b"\xff\xd8", b"BM")
+            or head[:6] in (b"GIF87a", b"GIF89a")):
+        return
+    if sum(1 for x in rep["extra"] if "OCR 文字识别" in x) >= _OCR_MAX:
+        return
+    _OCR_SEEN.add(key)
+    prefix = (tag + " ") if tag else ""
+
+    # 二维码：手机扫的那种，解出来常常就是 flag
+    try:
+        import mediax
+        qr = mediax.qr_decode(p)
+        if qr.get("ok"):
+            for t in qr.get("texts") or []:
+                rep["extra"].append("★ %s二维码（%s）：%s" % (prefix, qr["engine"], t[:200]))
+                h, _ = find_flags_in(t.encode("utf-8", "ignore"))
+                rep["flags"] += [x.decode("utf-8", "ignore") for x in h]
+    except Exception:
+        pass
+
+    # 文字识别
+    try:
+        import ocrx as _ocr
+        if not _ocr.ready()[0]:
+            return
+        lines, hits = _ocr.analyze(p)
+        if hits or len(lines) > 2:
+            rep["extra"].append("★ %sOCR 文字识别：" % prefix)
+            rep["extra"] += ["  " + x for x in lines[:25]]
+            rep["flags"] += hits
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------- 主流程
 
 def check_tail(data, kind):
@@ -1066,6 +1217,10 @@ def analyze(path, outdir=None, deep=True, verbose=True):
         "carved": [], "extra": [], "notes": [],
     }
     p = lambda *a: print(*a) if verbose else None
+    # 每次分析都重置 OCR 记录：同一个文件被分析两次（点两次「开始分析」、
+    # 或者 runner 里 misc 走两遍）时，第二次不能因为「已经 OCR 过」就跳过，
+    # 否则只存在于图上的 flag 会凭空消失。
+    _OCR_SEEN.clear()
 
     if not os.path.isfile(path):
         rep["notes"].append("文件不存在")
@@ -1131,6 +1286,15 @@ def analyze(path, outdir=None, deep=True, verbose=True):
                 # 修好之后按真实格式再走一遍（图片能看 LSB、zip 能解）
                 _fixed_path = rp["fixed_path"]
                 _kind = rp.get("kind") or ""
+                # ★ 后续所有分析（OCR / 二维码 / LSB / 解压）都切到修复版。
+                #   原来只把修复版拿去看了 LSB 和文本块，path 仍指向原文件，
+                #   于是「文件头被改坏 + 图上写着 flag」这种题 OCR 永远读不出来
+                #   （原图 PIL/tesseract 直接打不开）。实测 B3 就是这样漏的。
+                data = fixed
+                path = _fixed_path
+                if _kind:
+                    k = _kind
+                    rep["kind"] = k
                 if _kind == "PNG":
                     try:
                         for where, s in png_lsb(_fixed_path, fixed):
@@ -1279,14 +1443,62 @@ def analyze(path, outdir=None, deep=True, verbose=True):
                     rep["extra"].append(f"PNG 文本块: {s[:200]}")
                     h, c = find_flags_in(t)
                     rep["flags"] += [x.decode("utf-8", "ignore") for x in h]
+                # 文本块里塞「base64 过的 zip/png」也很常见：先当文字找 flag，
+                # 再 base64 解一次，解出文件头就雕出来继续挖。
+                try:
+                    # 文本块长这样：b"comment UEsDBBQ..."（关键字 + 空格 + 值），
+                    # 所以直接找里面最长的一段 base64 字符，而不是整串去解。
+                    for _m in re.finditer(rb"[A-Za-z0-9+/=]{32,}", t):
+                        _v = _m.group()
+                        try:
+                            _raw = base64.b64decode(_v + b"=" * (-len(_v) % 4))
+                        except Exception:
+                            continue
+                        if not any(sig in _raw[:64] for sig, _e, _n in CARVE_SIGS):
+                            continue
+                        _d = os.path.join(outdir or os.path.dirname(os.path.abspath(path)),
+                                          "_textcarved")
+                        rep["extra"].append("★ PNG 文本块里的 base64 解出文件，正在切出")
+                        for _fn, _nm in carve(_raw, _d, 0, allow_start=True):
+                            rep["carved"].append(_fn)
+                            rep["extra"].append("  文本块雕出 %s：%s"
+                                                % (_nm, os.path.basename(_fn)))
+                            dig_carved(_fn, _nm, _d, rep, 0, set())
+                        break
+                except Exception:
+                    pass
         if deep:
             for where, s in png_lsb(path, data):
                 rep["extra"].append(f"{where}: {s[:160]}")
                 h, _ = find_flags_in(s.encode("utf-8", "ignore"))
                 rep["flags"] += [x.decode("utf-8", "ignore") for x in h]
+            # ★ LSB 里藏的不一定是文字，也可能整个 zip/png（zsteg 的典型套路）。
+            #   原来的 png_lsb() 只取「可打印字符串」，二进制文件头 PK\x03\x04
+            #   直接被当乱码丢掉 —— 实测「zip 写进 R 通道最低位」一个字节都认不出来。
+            if data.startswith(b"\x89PNG"):
+                try:
+                    import stego as _stl
+                    from PIL import Image as _Im
+                    _w, _h = _Im.open(io.BytesIO(data)).size
+                    if _w * _h <= 1_200_000:          # 纯 Python 提位，大图太慢
+                        _lb = os.path.join(outdir or os.path.dirname(os.path.abspath(path)),
+                                           "_lsb")
+                        for _vn, _blob in _stl.png_lsb_pure(path, bits=1)[:4]:
+                            _hit = [_n for _sig, _e, _n in CARVE_SIGS if _sig in _blob]
+                            if not _hit:
+                                continue
+                            rep["extra"].append("★ LSB（%s）里有内嵌文件头：%s"
+                                                % (_vn, "、".join(_hit)))
+                            for _fn, _nm in carve(_blob, _lb, 0, allow_start=True):
+                                rep["carved"].append(_fn)
+                                rep["extra"].append("  从 LSB 雕出 %s：%s"
+                                                    % (_nm, os.path.basename(_fn)))
+                                dig_carved(_fn, _nm, _lb, rep, 0, set())
+                except Exception:
+                    pass
     if data.startswith(b"\x89PNG"):
         # 高度被改过？自动修复
-        rp = png_repair(path, data, outdir)
+        rp = png_repair(path, data, outdir, rep)
         if rp:
             msg, dst = rp
             rep["warn"].append(msg)
@@ -1564,18 +1776,7 @@ def analyze(path, outdir=None, deep=True, verbose=True):
 
     # 5.39) OCR：图片里如果有文字（截图题、图上写 flag），识别出来
     # 只在图片且 OCR 环境就绪时跑（tesseract 是外部程序，没装就跳过）
-    if data[:8] == b"\x89PNG\r\n\x1a\n" or data[:2] in (b"\xff\xd8", b"BM") \
-            or data[:6] in (b"GIF87a", b"GIF89a"):
-        try:
-            import ocrx as _ocr
-            if _ocr.ready()[0]:
-                _ol, _oh = _ocr.analyze(path)
-                if _oh or len(_ol) > 2:
-                    rep["extra"].append("★ OCR 文字识别：")
-                    rep["extra"] += ["  " + x for x in _ol[:25]]
-                    rep["flags"] += _oh
-        except Exception:
-            pass
+    _ocr_image(path, rep)
 
     # 5.37) X.509 证书解析（CTF 常把 flag 写进 CN / SAN / 自定义扩展）
     try:
@@ -1706,7 +1907,8 @@ def analyze(path, outdir=None, deep=True, verbose=True):
     if deep and size > 1024 and not data.startswith(b"RIFF"):
         base = outdir or os.path.join(os.path.dirname(os.path.abspath(path)), "_carved")
         got = carve(data if not big else data[:8 * 1024 * 1024], base, 0)
-        rep["carved"] = [g[0] for g in got]
+        rep["carved"] += [g[0] for g in got]
+        rep["carved"] = list(dict.fromkeys(rep["carved"]))
         _seen = set()
         for fn, name in got:
             rep["extra"].append(f"雕出 {name}: {os.path.basename(fn)} ({human(os.path.getsize(fn))})")

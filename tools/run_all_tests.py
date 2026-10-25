@@ -22,6 +22,7 @@ if not os.path.isfile(PY):
 SUITES = [
     ("编码/密码矩阵", "core/feature_matrix_test.py", 600, r"结果：(\d+)/(\d+)", False),
     ("文件类型矩阵", "core/file_matrix_test.py", 600, r"结果：(\d+)/(\d+)", False),
+    ("隐写/修复矩阵", "core/stego_matrix_test.py", 600, r"结果：(\d+)/(\d+)", False),
     ("面板矩阵", "core/panel_matrix_test.py", 300, r"结果：(\d+)/(\d+)", False),
     ("selftest", "core/selftest.py", 300, r"结果：(\d+)/(\d+)", False),
     ("面板冒烟", "core/panel_smoke_test.py", 200, r"(\d+)/(\d+) 通过", False),

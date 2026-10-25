@@ -249,7 +249,7 @@ def _(d):
     return p
 
 
-@case("png", "PNG 改高度藏行", "高度被改过")
+@case("png", "PNG 改高度藏行", "尺寸被改过")
 def _(d):
     from PIL import Image
     p = os.path.join(d, "f.png")

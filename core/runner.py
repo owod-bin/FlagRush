@@ -74,6 +74,26 @@ def _lines_misc(path):
                 except OSError:
                     continue
         if _gen:
+            # 排序：修复版/雕出的文件/解出来的文件排前面。
+            # 不然一张图会产出 40 多张位平面 + 频谱，修复版（真正要看的那张）
+            # 被挤到第 10 位以后，用户根本找不到。
+            def _prio(_p):
+                _n = os.path.basename(_p)
+                _stem = os.path.splitext(_n)[0]
+                if _stem.endswith("_修复"):        # 最终修复版（要看的就是这张）
+                    return 0
+                if "carved" in _n:                 # 雕出来的文件（zip 等）
+                    return 1
+                if _stem.endswith("_解密"):        # 伪加密修好的 zip
+                    return 1
+                if "_修复CRC" in _stem and not _stem.endswith("_修复CRC"):
+                    return 2                       # 修复版派生的图（频谱/位平面）
+                if _stem.endswith("_修复CRC"):
+                    return 3                       # 只修了 CRC 的中间产物
+                if "频谱" in _stem:
+                    return 2
+                return 9
+            _gen.sort(key=lambda _p: (_prio(_p), os.path.basename(_p)))
             _TL.files = _gen[:60]
     except Exception:
         pass
