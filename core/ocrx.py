@@ -179,6 +179,43 @@ def _langs():
         return []
 
 
+_PREFIX_RE = (r"(?i)\b(flag|ctf|qctf|hgame|nssctf|ctfshow|moectf|buuctf"
+              r"|sctf|zctf|xctf|n1ctf)")
+
+
+def _normalize(txt):
+    """把 OCR 常见的括号误识别纠正回 `flag{...}`。
+
+    tesseract 对花括号很不稳，实测（uploads/dabai.png）：
+        真实：flag{He1l0_d4_ba1}
+        psm11 原尺寸：flag(He1l0_d4_bal}     ← 左花括号变圆括号
+        psm11 放大 3x：flag{He1l0_d4_ba1}    ← 正确
+    不纠正的话，`flag(` 永远匹配不到 `flag\{...\}`，用户看到的就是
+    「图上明明有 flag，工具说没找到」。
+
+    规则（按行处理，只在「flag/ctf 前缀紧跟括号」时动手）：
+      · 前缀后的 ( [ 【 { 一律当左花括号；
+      · 行尾的 ) ] 】 } 一律当右花括号（OCR 常漏右括号，漏了就补上）；
+      · 括号内的空格去掉（OCR 常在中文/下划线附近插空格）。
+    """
+    if not txt:
+        return txt
+    out = []
+    for line in txt.splitlines():
+        m = re.search(_PREFIX_RE + r"\s*[\(\[\{【]\s*(.+)$", line)
+        if not m:
+            out.append(line)
+            continue
+        prefix, rest = m.group(1), m.group(2)
+        body = re.sub(r"[)\]}】]\s*$", "", rest).strip()
+        body = re.sub(r"\s+", "", body)
+        if len(body) >= 2 and len(body) <= 120:
+            out.append(prefix + "{" + body + "}")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def _flag_patterns():
     """flag 正则（复用 flagfmt 的可配置前缀）"""
     try:
@@ -199,6 +236,7 @@ def _has_flag(txt):
     """
     if not txt:
         return False
+    txt = _normalize(txt)
     if re.search(r"(?i)\b(?:flag|ctf|qctf|hgame|nssctf|ctfshow|moectf|buuctf"
                  r"|flagctf|sctf|zctf|xctf|n1ctf)\{", txt):
         return True
@@ -236,14 +274,23 @@ def ocr_image(path, lang=None, psm=3, retry_scale=2):
                 use.append(cand)
     if not use:
         use = ["eng"]
-    cfg = "--psm %d" % psm
     td = tessdata_dir()
-    if td:
-        cfg += ' --tessdata-dir "%s"' % td
+    td_cfg = (' --tessdata-dir "%s"' % td) if td else ""
+
+    # 候选顺序（拿到「花括号正确」的结果就停）：
+    #   ① psm 3  常规版面（截图、文档）
+    #   ② psm 11 稀疏文本 —— 图上只有一行小字、周围全是插图时，
+    #      psm 3 会把插图当版面、把小字整段丢掉（实测 dabai.png 只读出 "Wellom"）
+    #   ③ psm 3  放大 2x —— 小字/中文混排（历史上救回过「fag{便携版}」）
+    #   ④ psm 11 放大 3x —— 更小的字（dabai 的 `{` 要放大到 3x 才认对）
+    cands = [(psm, 1), (11, 1)]
+    if retry_scale and retry_scale > 1:
+        cands.append((psm, retry_scale))
+    if max(im.size) * 3 <= 4800:
+        cands.append((11, 3))
 
     best_txt, best_note, best_score = "", "", -1
-    scales = [1] + ([retry_scale] if retry_scale and retry_scale > 1 else [])
-    for scale in scales:
+    for _psm, scale in cands:
         im2 = im
         if scale != 1:
             try:
@@ -255,26 +302,43 @@ def ocr_image(path, lang=None, psm=3, retry_scale=2):
             # timeout 必须给：tesseract 如果缺 DLL，Windows 会弹「系统错误」模态框，
             # 进程卡在框上永不返回，pytesseract 就会一直等（用户看到界面卡在「分析中」）。
             # 60 秒足够识别超大图，超时就报错而不是死等。
-            txt = pytesseract.image_to_string(im2, lang="+".join(use),
-                                              config=cfg, timeout=60)
+            txt = pytesseract.image_to_string(
+                im2, lang="+".join(use),
+                config="--psm %d%s" % (_psm, td_cfg), timeout=60)
         except RuntimeError as e:
-            if scale == 1:
+            if best_score < 0:
                 return "", ("识别超时（60 秒）—— 可能是 tesseract 缺 DLL 弹了系统错误框：%s"
                             % str(e)[:60])
             continue
         except Exception as e:
-            if scale == 1:
+            if best_score < 0:
                 return "", "识别失败：%s" % e
             continue
         txt = (txt or "").strip()
-        score = 2 if _has_flag(txt) else (1 if "{" in txt else 0)
+        # 评分：3 = 原文就是 flag{...}（花括号正确）
+        #       2 = 归一化后才是 flag{...}（括号被认错，内容可能也不稳，继续找更好的）
+        #       1 = 有花括号但不是 flag；0 = 没东西
+        if _has_flag(txt) and "{" in txt:
+            score = 3
+        elif _has_flag(txt):
+            score = 2
+        elif "{" in txt:
+            score = 1
+        else:
+            score = 0
         if score > best_score:
             best_score = score
             best_txt = txt
-            best_note = "语言 %s%s，%d 字符" % (
-                "+".join(use), "" if scale == 1 else "，放大 %dx" % scale, len(txt))
-        if best_score >= 2:
+            best_note = "语言 %s，psm %d%s，%d 字符" % (
+                "+".join(use), _psm, "" if scale == 1 else "，放大 %dx" % scale, len(txt))
+        if best_score >= 3:
             break
+        # 第一轮一个字都没认出来：这图基本没文字，后面几轮只会白跑
+        # （一张 2000px 的图每轮 1~2 秒，四轮就是 8 秒）
+        if _psm == psm and scale == 1 and not txt:
+            break
+    if best_score == 2:
+        best_note += "（花括号是纠正出来的，建议人工核对）"
     return best_txt, best_note
 
 
@@ -295,16 +359,16 @@ def analyze(path, lang=None):
             lines.append("  " + ln.strip())
     # 找 flag。注意 OCR 常在花括号内插空格（flag{portable_ ocr}），
     # 直接拿去比对会失败，所以把空白清掉再报，同时保留原文方便人工核对。
-    for m in re.finditer(r"[A-Za-z][A-Za-z0-9_]{1,19}\{[^}\r\n]{2,}\}", txt):
-        raw = m.group()
-        cleaned = re.sub(r"\s+", "", raw)
-        if cleaned not in hits:
-            hits.append(cleaned)
-        if cleaned != raw:
-            lines.append("  ★ 发现 flag：%s（OCR 原文 %r，括号内的空格已清掉）"
-                         % (cleaned, raw))
-        else:
+    norm = _normalize(txt)
+    for m in re.finditer(r"[A-Za-z][A-Za-z0-9_]{1,19}\{[^}\r\n]{2,}\}", norm):
+        cleaned = re.sub(r"\s+", "", m.group())
+        if cleaned in hits:
+            continue
+        hits.append(cleaned)
+        if cleaned in txt:
             lines.append("  ★ 发现 flag：%s" % cleaned)
+        else:
+            lines.append("  ★ 发现 flag：%s（OCR 把括号/空格认错了，已自动纠正）" % cleaned)
     for kw in ("flag", "ctf", "password", "secret", "key"):
         if kw in txt.lower() and not hits:
             lines.append("  ★ 含关键词 %r，可能需要进一步分析" % kw)

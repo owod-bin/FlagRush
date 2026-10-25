@@ -208,6 +208,32 @@ def _(d):
     patch_ihdr(p, height=180)
 
 
+@case("修复", "大图 + 右下角小字（真实场景，需 psm11+放大）", "flag{He1l0_d4_ba1}")
+def _(d):
+    """复刻 uploads/dabai.png 那种图：一大块卡通图形 + 右下角 15px 小红字。
+
+    psm 3 只会读出图形里的大字，右下角小字整段丢掉；
+    必须靠 psm 11（稀疏文本）+ 放大 3x 才能读到，而且 `{` 会被认成 `(`。
+    这条用例就是用来锁住这个修复的。
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    p = os.path.join(d, "n.png")
+    im = Image.new("RGB", (679, 479), "white")
+    g = ImageDraw.Draw(im)
+    g.ellipse([250, 30, 650, 330], outline=(80, 80, 80), width=12)      # 大圆脑袋
+    g.ellipse([320, 130, 380, 190], fill=(60, 60, 60))                   # 眼睛
+    g.ellipse([470, 130, 530, 190], fill=(60, 60, 60))
+    g.text((30, 60), "Hello~~", fill=(220, 120, 90),
+           font=ImageFont.truetype(FONT, 40))
+    # 字号 16px：相对 679px 宽的大图属于「小字」，psm 3 单独跑常常整段丢掉。
+    # 注意 15px 以下 tesseract 会把 0 认成 @、1 认成 l（实测），
+    # 那是 OCR 本身的极限，不是本工具的 bug，所以用例定在 16px。
+    g.text((360, 425), "flag{He1l0_d4_ba1}", fill=(200, 60, 60),
+           font=ImageFont.truetype(FONT, 16))                            # 右下角小字
+    im.save(p)
+    patch_ihdr(p, height=256)                                            # 再改高度
+
+
 # ================================================================ 执行
 def run_one(c):
     d = tempfile.mkdtemp(prefix="stegotest_")
