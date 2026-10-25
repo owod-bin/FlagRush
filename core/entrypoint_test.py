@@ -357,7 +357,7 @@ def test_logic_bat():
 
     chk("网页版 bat 优先用自带 runtime", "runtime\\python\\python.exe" in w)
     chk("网页版 bat 启动 webserver.py", "core\\webserver.py" in w)
-    chk("网页版 bat 自动打开浏览器", "http://127.0.0.1:8000" in w)
+    chk("网页版 bat 自动打开浏览器", "http://127.0.0.1:8083" in w)
 
     rt = os.path.join(ROOT, "runtime", "python", "python.exe")
     chk("自带 runtime 存在", os.path.isfile(rt))

@@ -3,7 +3,7 @@
 一把梭 · 网页版服务端（纯标准库，不需要 Flask）
 ==============================================
 用法：  python core\\webserver.py [端口] [--lan]
-      默认 127.0.0.1:8000，加 --lan 后监听 0.0.0.0（队友可用你的 IP 访问）
+      默认 127.0.0.1:8083，加 --lan 后监听 0.0.0.0（队友可用你的 IP 访问）
 
 接口：
   GET  /                 网页（webui.html）
@@ -488,7 +488,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
-    port = 8000
+    port = 8083
     lan = False
     for a in (argv if argv is not None else sys.argv[1:]):
         if a == "--lan":
@@ -518,7 +518,7 @@ def main(argv=None):
             print(f"端口 {try_port} 被占用，换一个…")
             continue
     if srv is None:
-        print("找不到可用端口，请关掉占用 8000 的程序，或指定其它端口：python core\\webserver.py 9000")
+        print("找不到可用端口，请关掉占用 8083 的程序，或指定其它端口：python core\\webserver.py 9000")
         return
     print("=" * 60)
     print(" CTF 一把梭 · 网页版已启动")

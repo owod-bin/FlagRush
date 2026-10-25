@@ -45,12 +45,12 @@ if not defined PY (
 )
 
 echo 正在启动网页版（这个窗口别关，关了就停了）...
-start "CTF一把梭-网页版" /min "%PY%" "%~dp0core\webserver.py" 8000
+start "CTF一把梭-网页版" /min "%PY%" "%~dp0core\webserver.py" 8083
 timeout /t 2 >nul
-start "" http://127.0.0.1:8000
+start "" http://127.0.0.1:8083
 echo.
-echo   已打开：http://127.0.0.1:8000
-echo   队友访问：把本机 IP 发给他，用 http://本机IP:8000
+echo   已打开：http://127.0.0.1:8083
+echo   队友访问：把本机 IP 发给他，用 http://本机IP:8083
 echo   搜索目录：%~dp0工作区   （把题目文件丢进去，网页上就能按关键词搜）
 echo.
 pause

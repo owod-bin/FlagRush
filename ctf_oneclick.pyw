@@ -840,16 +840,16 @@ class App:
         try:
             if getattr(sys, "frozen", False):
                 # 打包后没有 python.exe，用自己带参数再起一个进程
-                cmd = [sys.executable, "--web", "8000"]
+                cmd = [sys.executable, "--web", "8083"]
             else:
-                cmd = [sys.executable, os.path.join(CORE, "webserver.py"), "8000"]
+                cmd = [sys.executable, os.path.join(CORE, "webserver.py"), "8083"]
             subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
             messagebox.showerror("启动失败", f"起不来网页版：{e}")
             return
         self.status.configure(text="网页版启动中…")
-        self.root.after(1500, lambda: (webbrowser.open("http://127.0.0.1:8000"),
-                                       self.status.configure(text="网页版已打开：http://127.0.0.1:8000")))
+        self.root.after(1500, lambda: (webbrowser.open("http://127.0.0.1:8083"),
+                                       self.status.configure(text="网页版已打开：http://127.0.0.1:8083")))
 
     def pick(self):
         p = filedialog.askopenfilename(title="选择题目文件")
@@ -1315,7 +1315,7 @@ if __name__ == "__main__":
     _argv = [a for a in sys.argv[1:]]
     if _argv and _argv[0] == "--web":
         import webserver
-        _port = 8000
+        _port = 8083
         for a in _argv[1:]:
             if a.isdigit():
                 _port = int(a)

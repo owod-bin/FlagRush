@@ -135,11 +135,11 @@ if not exist "FlagRush.exe" (
   exit /b 1
 )
 echo 正在启动网页版服务...
-start "" "FlagRush.exe" --web 8000
-echo 稍等两秒，浏览器会自动打开 http://127.0.0.1:8000
+start "" "FlagRush.exe" --web 8083
+echo 稍等两秒，浏览器会自动打开 http://127.0.0.1:8083
 echo 如果没有自动打开，手动在浏览器里输入上面这个地址。
 timeout /t 3 >nul
-start "" http://127.0.0.1:8000
+start "" http://127.0.0.1:8083
 echo.
 echo 这个窗口可以关掉（服务在后台跑）。
 echo 要停止服务：任务管理器里结束「FlagRush.exe」。
@@ -152,13 +152,13 @@ setlocal
 title FlagRush - 局域网
 cd /d "%~dp0"
 echo 启动局域网模式：同一个 WiFi / 交换机的队友都能访问
-start "" "FlagRush.exe" --web 8000 --lan
+start "" "FlagRush.exe" --web 8083 --lan
 timeout /t 2 >nul
 echo.
 echo 查一下本机 IP（下面 ipconfig 结果里的 IPv4 地址）：
 ipconfig | findstr /i "IPv4"
 echo.
-echo 队友在浏览器里打开  http://你的IP:8000  就行。
+echo 队友在浏览器里打开  http://你的IP:8083  就行。
 echo.
 pause
 exit /b 0
