@@ -472,7 +472,14 @@ B91 = ('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
 
 
 def _bignum_decode(t, alpha, name):
-    """Base36 / Base58 / Base62 这类「把整串当一个大整数」的编码"""
+    """Base36 / Base58 / Base62 这类「把整串当一个大整数」的编码
+
+    长度必须限制：`n = n * len(alpha) + i` 是 **O(n²)**，
+    实测 10 万字符的输入光这一项就 3.2 秒（三个进制各来一遍）。
+    真实的 base36/58/62 密文不会超过几千字符（再长就是二进制数据了）。
+    """
+    if len(t) > 4096:
+        return []
     n = 0
     for c in t:
         i = alpha.find(c)
@@ -961,6 +968,10 @@ def _t_b64_case(s):
     """
     t = re.sub(r"\s+", "", s)
     if len(t) < 8 or len(t) % 4 or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", t):
+        return []
+    # 每 4 字符要试 16 种大小写组合：10 万字符就是 40 万次 b64decode（实测 1.2 秒）。
+    # 超过 4000 字符的「大小写错乱 base64」不现实，直接跳过。
+    if len(t) > 4000:
         return []
     groups = [t[i:i + 4] for i in range(0, len(t), 4)]
     # 最后一组可能带 =，只有 2 种大小写组合中的一部分有效

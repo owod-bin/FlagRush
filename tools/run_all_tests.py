@@ -26,7 +26,7 @@ SUITES = [
     ("selftest", "core/selftest.py", 300, r"结果：(\d+)/(\d+)", False),
     ("面板冒烟", "core/panel_smoke_test.py", 200, r"(\d+)/(\d+) 通过", False),
     ("fulltest", "core/fulltest.py", 500, r"主用例：(\d+)/(\d+)", False),
-    ("经典能力", "core/classic_ability_test.py", 900, r"(\d+)/(\d+) 通过", True),
+    ("经典能力", "core/classic_ability_test.py", 900, r"通过 (\d+)/(\d+)", True),
     ("三对象（exe/bat/web）", "core/entrypoint_test.py", 700, r"三对象测试：(\d+)/(\d+)", True),
 ]
 
