@@ -392,6 +392,19 @@ exit /b 0
     log(" 完成：%s" % DIST)
     log(" 总大小：%.0f MB" % (total / 1048576.0))
     log("=" * 62)
+
+    # 删掉 PyInstaller 的中间目录 build/
+    # 里面有 build/FlagRush/FlagRush.exe，和 dist 里那个**内容完全一样**（MD5 相同），
+    # 但没有配套的 _internal —— 双击连报错框都不弹，纯静默无反应。
+    # 实测用户会点错，然后以为「exe 用不了」。
+    _bd = os.path.join(ROOT, "build")
+    if os.path.isdir(_bd):
+        import shutil as _sh
+        try:
+            _sh.rmtree(_bd)
+            log(" 已删除中间目录 build\（里面那个 exe 缺 _internal，点不开）")
+        except Exception as _e:
+            log(" [!] build\ 删不掉（%s），请手动删除，别点里面的 exe" % str(_e)[:40])
     return 0
 
 
