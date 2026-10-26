@@ -45,39 +45,28 @@ desktop.ini
 
 # ============================================================
 # 测试临时文件
+# 统一规则：以 _ 开头的都是临时产物（调试脚本 / 样本 / 日志 / 目录）。
+# 不会误伤 app.ico / app_icon_512.png / 使用说明.md 这些正式文件
+# （它们不以 _ 开头）。
 # ============================================================
-/_smoke/
-/_stegotest/
-/_real/
-/_tree.json
+/_*/
+/_*.*
+/core/_*
+/core/_*/
 _corpus_*.txt
 _dl_*.txt
+_tree.json
+_cm.txt
+_msg.txt
+_v.py
+_c_*.py
 
-# 临时调试脚本
-/_*.py
-
-# 分析过程产生的临时目录
+# 分析过程产生的临时目录（生成在被分析文件旁边时也要忽略）
 _split/
 _位平面/
 _dct_out/
 _bits_out/
-
-# 打包时的临时目录（tesseract 精简过程产生）
 _tess*/
 
-# 打包时的临时目录（tesseract 精简过程产生）
-_tess*/
-
-# 提交信息临时文件
-_cm.txt
-_msg.txt
-
-# 测试/调试临时文件
-_ca*.log
-_fm.log
-_ep.log
-_st.log
-_sweep_tmp/
-_rsa_cases.pkl
-_v.py
-_c_*.py
+# 打包时的临时输出目录
+dist_build/
