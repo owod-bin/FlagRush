@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal DisableDelayedExpansion
 title CTF 一把梭 - 拖文件进来
 
 rem ============================================================
@@ -8,7 +8,15 @@ rem  （综合 / 逆向 / Pwn / 取证）—— 不需要 tkinter
 rem ============================================================
 set "PY="
 
-rem 优先带 Pillow 的（图片 LSB 要用）
+rem 优先用本目录自带的 runtime（和「启动网页版/启动图形界面」保持一致）。
+rem 原来的顺序是先找系统 Python，比赛机上如果系统 Python 没装 Pillow，
+rem 图片题会直接失败，而自带 runtime 里库是齐的。
+if exist "%~dp0runtime\python\python.exe" (
+  "%~dp0runtime\python\python.exe" -c "import PIL" >nul 2>nul
+  if not errorlevel 1 set "PY=%~dp0runtime\python\python.exe"
+)
+
+rem 其次找系统里带 Pillow 的（图片 LSB 要用）
 for %%d in (
   "%LOCALAPPDATA%\Programs\Python\Python313"
   "%LOCALAPPDATA%\Programs\Python\Python312"

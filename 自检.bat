@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal DisableDelayedExpansion
 title CTF Ò»°ÑËó - ×Ô¼ì
 
 set "PY="

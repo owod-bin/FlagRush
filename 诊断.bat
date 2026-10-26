@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal DisableDelayedExpansion
 title CTF 一把梭 - 环境诊断
 
 echo ============================================================

@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal DisableDelayedExpansion
 rem ---- 清掉系统里别的 Python 环境变量，否则内置解释器会找错标准库 ----
 set "PYTHONHOME="
 set "PYTHONPATH="

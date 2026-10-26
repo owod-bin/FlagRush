@@ -148,7 +148,7 @@ FlagRush/
 ├── webui.html               # 网页版前端（单文件，无框架）
 ├── ctf_oneclick.pyw         # 桌面版入口
 ├── 使用说明.md               # 详细使用文档
-├── 全量测试报告.md           # 322 个用例的测试报告
+├── 详细测试报告_20261026.md   # 三轮详细测试（25 个问题 + 全部结果）
 ├── 对标分析_CTF一键工具.md    # 与 Ciphey / dCode / quipqiup 等 9 个工具的对比
 ├── requirements.txt
 └── LICENSE
@@ -158,21 +158,37 @@ FlagRush/
 
 ## 测试
 
-自带 8 个测试套件，共 **322 个用例**：
+自带 **13 个测试套件、663 个用例**，一键全量：
 
 ```bash
-python core/selftest.py            # 引擎自检（63）
-python core/selftest_web.py        # 网页版（34）
-python core/fulltest.py            # 题库 + 一键路由（74）
-python core/battletest.py          # 实战八面板（61）
-python core/uitest.py              # 图形界面（46）
-python core/classic_ability_test.py # 古典密码能力（60）
-python core/classic_e2e_test.py    # 端到端（10）
-python core/real_challenge_test.py # 真实赛题（7）
-python core/panel_smoke_test.py    # 九面板冒烟（14）
+python tools/run_all_tests.py      # 约 12 分钟，13 个套件各自独立进程
 ```
 
-当前结果：**318/322 通过（98.8%）**。4 个未过项全部是自创算法题（详见测试报告）。
+| 套件 | 用例 | 套件 | 用例 |
+|---|---|---|---|
+| 编码/密码矩阵 | 85 | 文件类型矩阵 | 26 |
+| 隐写/修复矩阵 | 14 | 面板矩阵 | 12 |
+| 边界/健壮性 | 44 | selftest | 63 |
+| 面板冒烟 | 16 | fulltest | 50 |
+| 经典能力 | 79 | 实战集成 | 61 |
+| 新模块专项 | 117 | 古典端到端 | 10 |
+| 三对象（exe/bat/web） | 86 | | |
+
+当前结果：**663/663 全部通过**。另有：
+
+- `core/selftest_web.py`：网页接口专项 **46/46**
+- `core/uitest.py`：桌面版真建窗口、真点按钮 **47/47**
+- `core/real_challenge_test.py`：真实赛题 **4/7**（3 道题面信息不足，详见报告）
+- `core/preflight_test.py`：**赛前自检**，比赛前在比赛机上跑，7 秒出结论
+
+### 比赛前先跑这个
+
+```bash
+python core/preflight_test.py      # 或双击 赛前自检.bat
+```
+
+检查环境可写、磁盘空间、内置工具、OCR、端口，并把 8 类常见题型各做一遍（带耗时）。
+有 FAIL 就是现在得修，有 WARN 就是能用但要注意。
 
 ---
 
