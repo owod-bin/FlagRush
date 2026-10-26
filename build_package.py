@@ -79,7 +79,9 @@ def main():
 
     # 2) 文档 / 配置 / 目录
     log("\n[2/4] 文档与目录")
-    for fn in ("使用说明.docx", "使用说明.md", "flag格式.txt"):
+    # dist 里只放 docx：md 是源文件（改完 md 用 tools/md2docx.py 生成 docx），
+    # 两份同样内容放一起，用户反而不知道点哪个。
+    for fn in ("使用说明.docx", "flag格式.txt"):
         copyfile(os.path.join(ROOT, fn), os.path.join(DIST, fn))
     for d in ("工作区", "uploads"):
         p = os.path.join(DIST, d)
