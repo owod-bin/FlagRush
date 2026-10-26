@@ -633,6 +633,64 @@ def t_uploads_traversal():
         return e.code == 404, f"HTTP {e.code}"
 
 
+def t_download_percent():
+    """文件名里带 %41 这类字样时，下载链接不能因为二次解码而失效"""
+    import urllib.parse
+    p = os.path.join(webserver.UPLOADS, "100%41_test.txt")
+    os.makedirs(webserver.UPLOADS, exist_ok=True)
+    with open(p, "wb") as f:
+        f.write(b"percent-ok")
+    try:
+        url = "/api/download?f=" + urllib.parse.quote(p)
+        got = raw_get(url)
+        return got == b"percent-ok", "%d 字节" % len(got)
+    finally:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def t_concurrent_upload():
+    """8 线程同时传同名文件：落盘内容必须是某一次完整上传，不能是混合体"""
+    import concurrent.futures as cf
+    import hashlib
+    payloads = [bytes([i]) * (64 * 1024) for i in range(8)]
+    good = {hashlib.md5(x).hexdigest() for x in payloads}
+
+    def one(i):
+        bd = "----race"
+        body = (f"--{bd}\r\nContent-Disposition: form-data; name=\"file\"; "
+                f"filename=\"race.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                ).encode() + payloads[i] + f"\r\n--{bd}--\r\n".encode()
+        return _post_raw("/api/upload", body,
+                         f"multipart/form-data; boundary={bd}")
+
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        rs = list(ex.map(one, range(8)))
+    p = os.path.join(webserver.UPLOADS, "race.bin")
+    data = open(p, "rb").read() if os.path.exists(p) else b""
+    try:
+        os.remove(p)
+    except OSError:
+        pass
+    ok = all(st == 200 for st, _ in rs) and hashlib.md5(data).hexdigest() in good
+    return ok, "%d 字节 / %d 次上传" % (len(data), len(rs))
+
+
+def t_flagformat_bad_regex():
+    """flag 格式里写非法正则：要 400 并说明，不能静默写坏配置"""
+    st, r = _post_raw("/api/flagformat",
+                      json.dumps({"value": "flag, re:("}).encode(),
+                      "application/json")
+    # 恢复原配置（测试可能已经改了）
+    try:
+        post("/api/flagformat", {"value": ""})
+    except Exception:
+        pass
+    return st == 400 and "正则" in (r.get("error") or ""), f"HTTP {st} {r.get('error','')[:40]}"
+
+
 def t_hex_guard():
     """_allowed_read 必须拒绝系统文件（--lan 下的越权读取）"""
     bad = webserver._allowed_read("C:/Windows/win.ini")
@@ -787,6 +845,9 @@ def main():
     case("上传 boundary 不匹配", t_upload_bad_boundary)
     case("/uploads 路径穿越", t_uploads_traversal)
     case("越权读取被拦（_allowed_read）", t_hex_guard)
+    case("下载：文件名含 %41", t_download_percent)
+    case("并发同名上传不损坏", t_concurrent_upload)
+    case("flag 格式：非法正则给 400", t_flagformat_bad_regex)
 
     srv.shutdown()
     ok = sum(1 for r in RESULTS if r[0])

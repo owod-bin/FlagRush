@@ -264,8 +264,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/download":
             # 下载分析时提取出来的文件（流量包里的 zip/docx/图片、雕出的内嵌文件等）
             try:
+                # 只解一次：parse_qs 已经把 %XX 解开了，再 unquote 一次会把
+                # 文件名里的字面 %41 变成 A（实测 uploads/100%41.txt 下载 404）。
                 rel = (qs.get("f") or [""])[0]
-                rel = urllib.parse.unquote(rel)
                 if not rel:
                     return self._send_json({"ok": False, "error": "缺少参数 f"}, 400)
                 base = self._resolve_read(rel)
@@ -626,8 +627,19 @@ class Handler(BaseHTTPRequestHandler):
                             break
                     safe = os.path.basename(name.replace("\\", "/"))
                     dst = os.path.join(UPLOADS, safe)
-                    with open(dst, "wb") as f:
-                        f.write(data)
+                    # 先写临时文件再原子替换：两个人同时传同名文件时，
+                    # 直接 open(dst,"wb") 有概率写出「前一半是 A、后一半是 B」的混合体。
+                    _tmp = "%s.part.%d" % (dst, threading.get_ident())
+                    try:
+                        with open(_tmp, "wb") as f:
+                            f.write(data)
+                        os.replace(_tmp, dst)
+                    finally:
+                        if os.path.exists(_tmp):
+                            try:
+                                os.remove(_tmp)
+                            except OSError:
+                                pass
                     saved.append(dst)
                 if not saved:
                     return self._send_json({"ok": False, "error": "没有解析到文件"})

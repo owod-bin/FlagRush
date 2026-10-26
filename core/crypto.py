@@ -1460,6 +1460,89 @@ def _t_rail(s):
     return out
 
 
+def railfence_enc(s, rails):
+    """栅栏的另一个方向：按「之」字形写、按行读。
+
+    为什么两个方向都要有：不同工具对「栅栏加密/解密」的定义正好相反。
+    实测 2016 实验吧「围在栅栏里的爱」最后一步，
+    对 `IILYOAVNEBSAHR` 做**交错**（本函数）才得到 `ILOVESHIYANBAR`；
+    只做 railfence_dec 的 2~12 栏全都不是答案。
+    """
+    if rails < 2 or rails >= len(s):
+        return None
+    rows = [[] for _ in range(rails)]
+    r, d = 0, 1
+    for ch in s:
+        rows[r].append(ch)
+        if r == 0:
+            d = 1
+        elif r == rails - 1:
+            d = -1
+        r += d
+    return "".join("".join(x) for x in rows)
+
+
+def _t_rail_enc(s):
+    if len(s) > 200000 or not re.fullmatch(r"[\x20-\x7e\r\n]*", s):
+        return []
+    out = []
+    for n in range(2, min(13, len(s))):
+        r = railfence_enc(s, n)
+        if r and r != s:
+            out.append((f"栅栏交错-{n}栏", r))
+    return out
+
+
+# QWERTY 键盘字母顺序：键盘密码把 A-Z 依次换成这一串
+QWE_ALPHA = "QWERTYUIOPASDFGHJKLZXCVBNM"
+
+
+def _qwe_map(s, forward):
+    """forward=True：A→Q（加密）；False：Q→A（解密）"""
+    out = []
+    for ch in s:
+        u = ch.upper()
+        if forward:
+            i = ord(u) - 65
+            if 0 <= i < 26:
+                rep = QWE_ALPHA[i]
+            else:
+                out.append(ch)
+                continue
+        else:
+            i = QWE_ALPHA.find(u)
+            if i < 0:
+                out.append(ch)
+                continue
+            rep = chr(65 + i)
+        out.append(rep if ch.isupper() else rep.lower())
+    return "".join(out)
+
+
+def _t_qwe(s):
+    """键盘密码（QWE 替换）：题面常说「QWE 到底等不等于 ABC」。
+
+    两种方向都试：加密 A→Q、解密 Q→A。只在「几乎全是字母」时启用，
+    否则普通英文/中文会被乱换出大量垃圾分支，把组合搜索撑爆。
+    """
+    if len(s) < 6 or len(s) > 100000:
+        return []
+    letters = sum(1 for c in s if c.isalpha())
+    if letters < len(s.replace(" ", "")) * 0.95:
+        return []
+    out = []
+    for fwd, name in ((False, "QWE 键盘替换"), (True, "QWE 键盘还原")):
+        r = _qwe_map(s, fwd)
+        if not r or r == s:
+            continue
+        out.append((name, r))
+        # 顺带给出「替换后反转」：实验吧「围在栅栏里的爱」是
+        # 摩斯 → QWE → 反转 → 栅栏 四步，中间态分数不高，
+        # 单独作为一层很容易被 A* 的堆容量挤掉；合并成一步能救回来。
+        out.append((name + "+反转", r[::-1]))
+    return out
+
+
 def _t_bacon(s):
     t = re.sub(r"[^A-Za-z]", "", s).upper()
     if len(t) < 10 or len(t) % 5 or not set(t) <= set("AB"):
@@ -2635,6 +2718,46 @@ def _t_reverse(s):
     return [("反转", r)] if r != s else []
 
 
+def _classic_combo_scan(text):
+    """有界枚举「键盘替换 + 反转 + 栅栏」组合。
+
+    为什么需要单独扫：A* 是按分数剪枝的，而这类多步古典组合的中间态
+    （QWE 解完还是一串乱字母）分数很低，很容易在堆里被 5.8 分的
+    「栅栏-7栏」之类挤掉。实测 2016 实验吧「围在栅栏里的爱」就是
+    摩斯 → QWE → 反转 → 栅栏 四步，A* 跑了 5 秒也没把它留下。
+
+    成本：2（QWE 两个方向）× 2（反转）× 11（栏数）× 2（交错/解密）
+    = 88 次线性变换，短文本上是毫秒级。
+    """
+    t = (text or "").strip()
+    if not (8 <= len(t) <= 120):
+        return []
+    letters = sum(1 for c in t if c.isalpha())
+    if letters < len(t.replace(" ", "")) * 0.9:
+        return []
+    out, seen = [], set()
+    for fwd, qname in ((False, "QWE 键盘替换"), (True, "QWE 键盘还原")):
+        q = _qwe_map(t, fwd)
+        if not q or q == t:
+            continue
+        for rev, rname in ((False, ""), (True, "+反转")):
+            base = q[::-1] if rev else q
+            for rails in range(2, 13):
+                for fn, fname in ((railfence_enc, "栅栏交错"), (railfence_dec, "栅栏")):
+                    r = fn(base, rails)
+                    if not r or r == base or r in seen:
+                        continue
+                    seen.add(r)
+                    try:
+                        sc = score(r)
+                    except Exception:
+                        continue
+                    if sc >= 6.5:
+                        out.append((sc, "%s%s → %s-%d栏" % (qname, rname, fname, rails), r))
+    out.sort(key=lambda x: -x[0])
+    return out[:5]
+
+
 # 确定性变换：解出来的结果唯一、不用猜，可以一路剥到底
 try:
     import cnenc
@@ -3163,7 +3286,7 @@ def _t_columnar(s):
     return out
 
 
-AMB = [_t_rail, _t_caesar, _t_a1z26_nosep, _t_affine, _t_keyboard,
+AMB = [_t_rail, _t_rail_enc, _t_qwe, _t_caesar, _t_a1z26_nosep, _t_affine, _t_keyboard,
        _t_reverse, _t_atbash, _t_rot, _t_xor1,
        _t_scytale, _t_columnar, _t_utf7]
 
@@ -3623,6 +3746,16 @@ def solve(text, max_depth=8, beam=18, time_limit=8.0, budget=20000):
         # 之前堆里罚、排序不罚，导致 5 层垃圾链（文本分 10.5）在最终排序里
         # 压过单步正解（文本分 4.0 + 0.4），二进制用例直接掉到第 38 名。
         return -(sc - 1.3 * st + bonus)
+
+    # ---- 经典多步组合补扫（QWE 键盘 + 反转 + 栅栏）
+    # A* 按分数剪枝会漏掉「中间态分数低」的多步链，这里做一次有界枚举补上。
+    try:
+        for _sc, _nd, _txt in _classic_combo_scan(cur0):
+            _k = _txt.strip()
+            if _k not in res_map or _sc > res_map[_k][0]:
+                res_map[_k] = (_sc, _nd, _txt)
+    except Exception:
+        pass
 
     # 展示 60 条：猪圈/NATO/DNA/元素周期表这类解出来只有 5~9 个字符，
     # 分数天然低，40 条时经常被挤看不到（实测都在池子里，只是排名靠后）
