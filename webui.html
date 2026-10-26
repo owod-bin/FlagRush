@@ -166,11 +166,11 @@ const PANELS=[
  ["crypto","② 编码密码","文本：Base 家族 11 种 + 古典密码，最多 8 层嵌套"],
  ["rev","③ 逆向","文件：PE/ELF 结构、壳、关键字符串"],
  ["web","④ Web","文本：URL/JWT 多轮解码 + 扫描命令 + payload"],
- ["webscan","⑧ 渗透扫描","文本：给 URL，真发请求找源码泄露/注入/弱口令并提 flag"],
  ["forensic","⑤ 取证","文件：pcap 提文件、图片 EXIF"],
  ["pwn","⑥ Pwn","文件：checksec、偏移计算"],
  ["rsa","⑦ RSA","文本：n/e/c 九种攻击（含 Håstad）"],
- ["hex","⑩ 十六进制","文件：hexdump 查看器 —— 跳偏移、搜关键词、上下翻屏"]
+ ["webscan","⑧ 渗透扫描","文本：给 URL，真发请求找源码泄露/注入/弱口令并提 flag"],
+ ["hex","⑨ 十六进制","文件：hexdump 查看器 —— 跳偏移、搜关键词、上下翻屏"]
 ];
 const TEXT=["crypto","web","webscan","rsa"];
 let cur="auto", busy=false, lastRes=null, lastTarget="";
@@ -391,6 +391,12 @@ function render(r,value){
               (r.lines||[]).map(x=>x[0]).join('\n');
     navigator.clipboard.writeText(txt); ca.textContent='已复制';
     setTimeout(()=>ca.textContent='复制全部结果',1200);};
+
+  // 分析完把「导出 .md」显示出来。
+  // 原来只有搜索结果的 renderSearch 里会显示它，正常分析的 render() 忘了，
+  // 结果是分析完导出按钮一直是 display:none —— 用户根本点不到。
+  const _eb=document.getElementById('expmd');
+  if(_eb) _eb.style.display='inline-block';
 }
 
 /* ---------- 白天 / 夜间 ---------- */
