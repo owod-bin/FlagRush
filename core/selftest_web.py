@@ -555,6 +555,99 @@ def t_concurrent():
     return ok, f"结果 {got}"
 
 
+# ------------------------------------------------------------------ 健壮性
+def _post_raw(path, data, ctype):
+    """发原始 body，返回 (状态码, 响应 JSON)；4xx 不抛异常"""
+    req = urllib.request.Request(BASE + path, data=data,
+                                 headers={"Content-Type": ctype})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return e.code, {}
+
+
+def t_panel_type():
+    """panel 传数字不能 500（原来是 'int' object has no attribute 'strip'）"""
+    st, r = _post_raw("/api/analyze", json.dumps({"panel": 123, "value": "x"}).encode(),
+                      "application/json")
+    return st == 400 and not r.get("ok"), f"HTTP {st} {r.get('error','')[:40]}"
+
+
+def t_value_type():
+    """value 传对象不能当成文本硬分析"""
+    st, r = _post_raw("/api/analyze", json.dumps({"panel": "crypto", "value": {"a": 1}}).encode(),
+                      "application/json")
+    return st == 400 and not r.get("ok"), f"HTTP {st} {r.get('error','')[:40]}"
+
+
+def t_panels_api():
+    """/api/panels 文档里有，必须真能用"""
+    r = get("/api/panels")
+    ids = [p["id"] for p in (r.get("panels") or [])]
+    return r.get("ok") and len(ids) >= 9 and "misc" in ids, f"{len(ids)} 个面板"
+
+
+def t_head():
+    """HEAD 请求不能 501（部分下载工具/浏览器会先探一下）"""
+    req = urllib.request.Request(BASE + "/", method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status == 200, f"HTTP {r.status}"
+    except Exception as e:
+        return False, str(e)[:40]
+
+
+def t_upload_boundary_eq():
+    """boundary 里含 '=' 时不能把分隔符写进文件（静默损坏）"""
+    bd = "----boundary=xyz"
+    payload = b"CONTENT-OK"
+    body = (f"--{bd}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bd_eq.txt\"\r\n"
+            f"Content-Type: application/octet-stream\r\n\r\n").encode() + payload + \
+           f"\r\n--{bd}--\r\n".encode()
+    st, r = _post_raw("/api/upload", body, f"multipart/form-data; boundary={bd}")
+    if st != 200 or not r.get("ok"):
+        return False, f"HTTP {st} {r.get('error','')}"
+    got = open(r["files"][0], "rb").read()
+    return got == payload, f"落盘 {got[:40]!r}"
+
+
+def t_upload_bad_boundary():
+    """header 的 boundary 和 body 不一致：要报错，不能存个坏文件"""
+    bd_h, bd_b = "----AAA", "----BBB"
+    body = (f"--{bd_b}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bad_bd.txt\"\r\n"
+            f"\r\nxx\r\n--{bd_b}--\r\n").encode()
+    st, r = _post_raw("/api/upload", body, f"multipart/form-data; boundary={bd_h}")
+    return st == 400 and not r.get("ok"), f"HTTP {st} {r.get('error','')[:40]}"
+
+
+def t_uploads_traversal():
+    """/uploads/../xxx 不能读到 uploads 同级目录"""
+    try:
+        raw_get("/uploads/../webui.html")
+        return False, "穿越成功了"
+    except urllib.error.HTTPError as e:
+        return e.code == 404, f"HTTP {e.code}"
+
+
+def t_hex_guard():
+    """_allowed_read 必须拒绝系统文件（--lan 下的越权读取）"""
+    bad = webserver._allowed_read("C:/Windows/win.ini")
+    os.makedirs(webserver.UPLOADS, exist_ok=True)
+    up = os.path.join(webserver.UPLOADS, "_guard_test.txt")
+    with open(up, "w", encoding="utf-8") as f:
+        f.write("x")
+    good = webserver._allowed_read(up)
+    try:
+        os.remove(up)
+    except OSError:
+        pass
+    return bad is None and good is not None, f"win.ini={bad} uploads内={bool(good)}"
+
+
 def t_flagformat_api():
     """网页版能改 flag 格式：GET 读、POST 写、立即生效、能还原"""
     import flagfmt
@@ -686,6 +779,14 @@ def main():
     case("上传文件字节一致", t_upload_binary_safe)
     case("未知接口返回 404", t_404)
     case("并发 4 请求", t_concurrent)
+    case("panel 传数字给 400", t_panel_type)
+    case("value 传对象给 400", t_value_type)
+    case("/api/panels 可用", t_panels_api)
+    case("HEAD 请求", t_head)
+    case("上传 boundary 含 =", t_upload_boundary_eq)
+    case("上传 boundary 不匹配", t_upload_bad_boundary)
+    case("/uploads 路径穿越", t_uploads_traversal)
+    case("越权读取被拦（_allowed_read）", t_hex_guard)
 
     srv.shutdown()
     ok = sum(1 for r in RESULTS if r[0])

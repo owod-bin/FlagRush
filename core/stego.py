@@ -435,6 +435,40 @@ def png_fix_crc(data):
     return bytes(out), fixed
 
 
+def png_struct_ok(data):
+    """PNG 的块结构是否完整（能安全地重算 CRC）。
+
+    只校验「骨架」：签名、IHDR 在最前且长度 13、每个块类型都是字母、
+    块长度不越界、最后有 IEND。不校验 IDAT 是否真能解压（那是 PIL 的事）。
+
+    为什么要这个：被截断的 PNG（题目上传一半、或故意砍掉尾巴）里，
+    png_fix_crc 会把尾部残缺数据也当成块来重算 CRC，产出一个
+    「CRC 全对、但任何看图软件都打不开」的假修复版。实测 30 字节的
+    PNG 头会生成 trunc_修复CRC.png，cv2 直接报 can't open/read file。
+    """
+    if not data or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return False
+    pos, n = 8, len(data)
+    first = True
+    while pos + 12 <= n:
+        ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        typ = data[pos + 4:pos + 8]
+        if ln > 0x7FFFFFFF:
+            return False
+        if not all(65 <= c <= 90 or 97 <= c <= 122 for c in typ):
+            return False
+        if first:
+            if typ != b"IHDR" or ln != 13:
+                return False
+            first = False
+        if pos + 12 + ln > n:
+            return False
+        if typ == b"IEND":
+            return True
+        pos += 12 + ln
+    return False
+
+
 def png_anomaly(data):
     """PNG 块级体检：CRC 错、块名乱写、块顺序错、多余的私有块。
 

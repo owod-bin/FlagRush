@@ -220,6 +220,10 @@ def pollard_rho(n, rounds=8, time_limit=1.5):
       · 80bit 以内（因子 < 2^40）通常 0.1 秒内出结果
       · 更大的直接放弃，交给 Fermat / 已知因子等有针对性的攻击
     """
+    if n < 4:
+        # n=1 / n=2 / n=3 没有「两个因子」可分解，random.randrange(1, n)
+        # 会抛 "empty range for randrange()"（实测 n=1 直接 500）
+        return None
     if n % 2 == 0:
         return 2
     if n % 3 == 0:

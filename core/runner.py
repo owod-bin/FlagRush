@@ -48,31 +48,67 @@ def _record_outdir(d):
         pass
 
 
+def _artifact_dirs(out):
+    return [out] + [os.path.join(out, d) for d in
+                    ("_位平面", "_carved", "_traffic", "_spectro",
+                     "_extract", "_split", "_nested", "L1", "L2", "L3", "L4")]
+
+
+def _snapshot(dirs):
+    """记录目录里已有的文件（名字 → 修改时间+大小）。
+
+    用途：分析结束后只把「新增/被改写」的文件当成产物。
+    原来用的是「mtime >= 开始时间 - 1 秒」—— 只要同一个目录里还有别的文件
+    是一秒内刚写进去的（网页版 uploads 连续上传两个文件、拖一个文件夹进来），
+    它就会被当成这次的产物列进下载区。实测：分析 one.bin 时，下载区里
+    第一个是刚上传的 empty.bin；分析 A 题时会把 B 题的图片也列出来。
+    """
+    snap = {}
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for fn in names:
+            p = os.path.join(d, fn)
+            try:
+                if os.path.isfile(p):
+                    snap[p] = (os.path.getmtime(p), os.path.getsize(p))
+            except OSError:
+                continue
+    return snap
+
+
 def _lines_misc(path):
     import misc
     out = os.path.dirname(os.path.abspath(path))
     _record_outdir(out)
     t = time.time()
+    # 分析前先拍快照，分析后只认新增/改写的文件（见 _snapshot 注释）
+    _before = _snapshot(_artifact_dirs(out))
     rep = misc.analyze(path, out, deep=True, verbose=False)
 
     # 把本次生成的产物（位平面 / 频谱 / GIF 帧 / 雕刻文件…）收集起来。
     # 不收集的话：网页版右侧「下载」是空的，用户只看到文字说
     # 「已生成 xxx_频谱.png」，却不知道去哪儿点 —— 实测就是这样。
     try:
-        _dirs = [out] + [os.path.join(out, d) for d in
-                         ("_位平面", "_carved", "_traffic", "_spectro",
-                          "_extract", "_split", "_nested", "L1", "L2", "L3", "L4")]
         _gen = []
-        for _d in _dirs:
+        for _d in _artifact_dirs(out):
             if not os.path.isdir(_d):
                 continue
             for _fn in sorted(os.listdir(_d)):
                 _p = os.path.join(_d, _fn)
                 try:
-                    if os.path.isfile(_p) and os.path.getmtime(_p) >= t - 1.0:
-                        _gen.append(_p)
+                    if not os.path.isfile(_p):
+                        continue
+                    _st = (os.path.getmtime(_p), os.path.getsize(_p))
                 except OSError:
                     continue
+                if _before.get(_p) == _st:
+                    continue          # 分析前就有、分析后没变 → 不是本次产物
+                _gen.append(_p)
         if _gen:
             # 排序：修复版/雕出的文件/解出来的文件排前面。
             # 不然一张图会产出 40 多张位平面 + 频谱，修复版（真正要看的那张）
@@ -307,7 +343,17 @@ def _lines_pwn(path):
 
 def _lines_rsa(text):
     import rsa
-    rep = rsa.analyze(text)
+    try:
+        rep = rsa.analyze(text)
+    except ValueError as e:
+        # Python 3.11+ 对超长数字串有 4300 位上限（int() 直接抛 ValueError），
+        # 用户从题目里贴一串几十 KB 的 n 就会看到内部报错。给一句人话。
+        return [("RSA 参数解析失败：%s" % e, "err"),
+                ("提示：n / e / c 请贴十进制整数（或 0x 开头的十六进制），"
+                 "长度不要超过几千位", "dim")], []
+    except Exception as e:
+        return [("RSA 分析出错：%s: %s" % (type(e).__name__, e), "err"),
+                ("参数可能不合法（例如 n 不是正整数），换一组再试", "dim")], []
     L, flags = [], []
     for line in rep["lines"]:
         tag = "ok" if line.startswith("★") else ("h" if line[:2] in ("n ", "e ", "c ") else "")

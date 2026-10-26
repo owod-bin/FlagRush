@@ -135,11 +135,12 @@ if not exist "FlagRush.exe" (
   exit /b 1
 )
 echo 正在启动网页版服务...
-start "" "FlagRush.exe" --web 8083
-echo 稍等两秒，浏览器会自动打开 http://127.0.0.1:8083
-echo 如果没有自动打开，手动在浏览器里输入上面这个地址。
+rem --open：由程序在真正绑定端口后打开浏览器。
+rem 8083 被占用时程序会自动换端口（8084/8085...），这里写死 8083 会打开别人的页面。
+start "" "FlagRush.exe" --web 8083 --open
+echo 稍等几秒，浏览器会自动打开（地址以服务窗口里打印的为准）
+echo 如果没有自动打开，看服务窗口里「本机访问」那一行。
 timeout /t 3 >nul
-start "" http://127.0.0.1:8083
 echo.
 echo 这个窗口可以关掉（服务在后台跑）。
 echo 要停止服务：任务管理器里结束「FlagRush.exe」。
@@ -158,7 +159,8 @@ echo.
 echo 查一下本机 IP（下面 ipconfig 结果里的 IPv4 地址）：
 ipconfig | findstr /i "IPv4"
 echo.
-echo 队友在浏览器里打开  http://你的IP:8083  就行。
+echo 队友在浏览器里打开  http://你的IP:8083  就行（以服务窗口打印的端口为准，
+echo 8083 被占用时会自动换成 8084/8085...）。
 echo.
 pause
 exit /b 0

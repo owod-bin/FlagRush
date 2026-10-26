@@ -24,6 +24,7 @@ SUITES = [
     ("文件类型矩阵", "core/file_matrix_test.py", 600, r"结果：(\d+)/(\d+)", False),
     ("隐写/修复矩阵", "core/stego_matrix_test.py", 600, r"结果：(\d+)/(\d+)", False),
     ("面板矩阵", "core/panel_matrix_test.py", 300, r"结果：(\d+)/(\d+)", False),
+    ("边界/健壮性", "core/edge_matrix_test.py", 900, r"结果：(\d+)/(\d+)", False),
     ("selftest", "core/selftest.py", 300, r"结果：(\d+)/(\d+)", False),
     ("面板冒烟", "core/panel_smoke_test.py", 200, r"(\d+)/(\d+) 通过", False),
     ("fulltest", "core/fulltest.py", 500, r"主用例：(\d+)/(\d+)", False),

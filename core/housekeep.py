@@ -48,10 +48,15 @@ def _size(path):
     return total
 
 
-def scan(root, include_uploads=False):
+def scan(root, include_uploads=False, uploads_root=None):
     """
     列出可以清理的东西，不删除。
     返回 [{"path","kind","size"}]，kind 是 dir/file
+
+    uploads_root：只有这个目录才会被当作「网页版上传目录」清空。
+    为什么必须指定：clean_roots 会连「最近分析过文件所在的目录」一起扫，
+    而 uploads 是个极常见的普通文件夹名 —— 不限定的话，用户在 D:\\资料\\uploads
+    里的文件会被当成临时文件删掉（实测这条路径是通的）。
     """
     out = []
     if not os.path.isdir(root):
@@ -61,6 +66,8 @@ def scan(root, include_uploads=False):
         if os.path.isdir(p) and name in DIR_NAMES:
             out.append({"path": p, "kind": "dir", "size": _size(p)})
         elif os.path.isdir(p) and name == UPLOAD_DIR and include_uploads:
+            if uploads_root and os.path.abspath(p) != os.path.abspath(uploads_root):
+                continue
             # uploads 里只清文件，保留目录本身
             files = [f for f in os.listdir(p) if os.path.isfile(os.path.join(p, f))]
             if files:
@@ -79,12 +86,12 @@ def human(n):
         n /= 1024.0
 
 
-def clean(root, include_uploads=False):
+def clean(root, include_uploads=False, uploads_root=None):
     """
     执行清理。返回 {"removed": n, "freed": bytes, "errors": [str], "items": [...]}
     """
     rep = {"removed": 0, "freed": 0, "errors": [], "items": []}
-    for item in scan(root, include_uploads):
+    for item in scan(root, include_uploads, uploads_root=uploads_root):
         p = item["path"]
         try:
             if item["kind"] == "dir":
@@ -118,10 +125,11 @@ def describe(rep):
     return "\n".join(lines)
 
 
-def clean_roots(roots, include_uploads=True):
+def clean_roots(roots, include_uploads=True, uploads_root=None):
     """
     一次清理多个目录（工具目录 + 分析过文件所在的目录）。
     roots: 可迭代的目录路径
+    uploads_root: 网页版上传目录的绝对路径（只有它会被整目录清空）
     """
     total = {"removed": 0, "freed": 0, "errors": [], "items": []}
     seen = set()
@@ -132,7 +140,7 @@ def clean_roots(roots, include_uploads=True):
         if root in seen or not os.path.isdir(root):
             continue
         seen.add(root)
-        rep = clean(root, include_uploads=include_uploads)
+        rep = clean(root, include_uploads=include_uploads, uploads_root=uploads_root)
         total["removed"] += rep["removed"]
         total["freed"] += rep["freed"]
         total["errors"] += [f"{os.path.basename(root)}/{e}" for e in rep["errors"]]
@@ -141,7 +149,7 @@ def clean_roots(roots, include_uploads=True):
     return total
 
 
-def scan_roots(roots, include_uploads=True):
+def scan_roots(roots, include_uploads=True, uploads_root=None):
     """列出多个目录里可清理的东西（不删）"""
     out = []
     seen = set()
@@ -152,7 +160,7 @@ def scan_roots(roots, include_uploads=True):
         if root in seen or not os.path.isdir(root):
             continue
         seen.add(root)
-        for it in scan(root, include_uploads=include_uploads):
+        for it in scan(root, include_uploads=include_uploads, uploads_root=uploads_root):
             it = dict(it)
             it["root"] = root
             out.append(it)

@@ -138,10 +138,18 @@ def human(n):
     return f"{n:.1f}TB"
 
 
+# 不可打印字节表（供 is_printable 用 translate 一次性剔除，C 层扫描）
+_NON_PRINTABLE = bytes(c for c in range(256)
+                       if not (32 <= c < 127 or c in (9, 10, 13) or c >= 0x80))
+
+
 def is_printable(b):
     if not b:
         return False
-    good = sum(1 for c in b if 32 <= c < 127 or c in (9, 10, 13) or c >= 0x80)
+    # 原来是 sum(1 for c in b if ...) 的 Python 生成器：20MB 文件要 2000 万次
+    # Python 迭代（实测 1.4 秒），而 analyze 里会调用好几次。
+    # translate(None, delete) 是 C 层实现，同一份数据 20MB 只要几毫秒。
+    good = len(b.translate(None, _NON_PRINTABLE))
     return good / len(b) > 0.92
 
 
@@ -1246,7 +1254,14 @@ def analyze(path, outdir=None, deep=True, verbose=True):
         try:
             import stego as _st0
             _fixed, _nfix = _st0.png_fix_crc(data)
-            if _nfix:
+            if _nfix and not _st0.png_struct_ok(_fixed):
+                # 结构本身就不完整（被截断 / 块长度被写坏）：
+                # 重算 CRC 只会造出一个「CRC 正确但根本打不开」的假修复版，
+                # 用户下载后看到坏图，比不修更困惑。
+                rep["warn"].append(
+                    "★ PNG 有 %d 个块的 CRC 不对，但文件结构不完整（疑似被截断），"
+                    "不做 CRC 修复" % _nfix)
+            elif _nfix:
                 _base = os.path.splitext(os.path.basename(path))[0]
                 _dir = outdir or os.path.dirname(os.path.abspath(path))
                 os.makedirs(_dir, exist_ok=True)   # outdir 可能还没建
@@ -1339,6 +1354,9 @@ def analyze(path, outdir=None, deep=True, verbose=True):
                 rep["extra"].append(f"★ 嵌套压缩包：共 {dx['layers']} 层，累计 {len(dx['files'])} 个文件")
                 rep["extra"] += ["  " + x for x in dx["lines"]]
                 rep["flags"] += dx["flags"]
+            # 压缩炸弹/超大文件被跳过时要说清楚，否则用户会以为「解压坏了」
+            for _n in (dx.get("notes") or [])[:4]:
+                rep["warn"].append("★ " + _n)
     except Exception:
         pass
 

@@ -799,7 +799,11 @@ class App:
             return
         # 分析产物在「被分析文件旁边」，不只在工具目录 —— 两边都扫
         roots = [HERE] + sorted(runner.RECENT_OUTDIRS)
-        items = housekeep.scan_roots(roots, include_uploads=True)
+        # uploads_root 限定为工具自己的 uploads：roots 里还包含
+        # 「最近分析过的目录」，那些目录里如果也有个叫 uploads 的文件夹
+        # （很常见的名字），不限定就会被整个清空。
+        _up = os.path.join(HERE, "uploads")
+        items = housekeep.scan_roots(roots, include_uploads=True, uploads_root=_up)
         if not items:
             # 都没找到，让用户自己选一个目录（题目文件可能早删了）
             if not messagebox.askyesno(
@@ -812,7 +816,7 @@ class App:
             if not d:
                 return
             roots = [d]
-            items = housekeep.scan_roots(roots, include_uploads=True)
+            items = housekeep.scan_roots(roots, include_uploads=True, uploads_root=_up)
             if not items:
                 messagebox.showinfo("清理", "这个目录里也没有可清理的临时文件。")
                 return
@@ -829,7 +833,7 @@ class App:
                 "只删分析产生的中间产物，不会碰「工作区」和你放的题目文件。"
                 % (len(items), housekeep.human(total), names, more, where)):
             return
-        rep = housekeep.clean_roots(roots, include_uploads=True)
+        rep = housekeep.clean_roots(roots, include_uploads=True, uploads_root=_up)
         self.fmt_status.config(text="已清理 %d 项" % rep["removed"], fg=OK)
         messagebox.showinfo("清理", housekeep.describe(rep))
 
@@ -840,16 +844,17 @@ class App:
         try:
             if getattr(sys, "frozen", False):
                 # 打包后没有 python.exe，用自己带参数再起一个进程
-                cmd = [sys.executable, "--web", "8083"]
+                cmd = [sys.executable, "--web", "8083", "--open"]
             else:
-                cmd = [sys.executable, os.path.join(CORE, "webserver.py"), "8083"]
+                cmd = [sys.executable, os.path.join(CORE, "webserver.py"),
+                       "8083", "--open"]
             subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
             messagebox.showerror("启动失败", f"起不来网页版：{e}")
             return
-        self.status.configure(text="网页版启动中…")
-        self.root.after(1500, lambda: (webbrowser.open("http://127.0.0.1:8083"),
-                                       self.status.configure(text="网页版已打开：http://127.0.0.1:8083")))
+        # 浏览器由服务端在真正绑定端口后打开（8083 被占时会换端口，
+        # 这里写死 8083 会打开别人的页面）
+        self.status.configure(text="网页版启动中…浏览器稍后自动打开")
 
     def pick(self):
         p = filedialog.askopenfilename(title="选择题目文件")
@@ -1320,7 +1325,8 @@ if __name__ == "__main__":
             if a.isdigit():
                 _port = int(a)
                 break
-        webserver.main([str(_port)] + [a for a in _argv[1:] if a == "--lan"])
+        webserver.main([str(_port)] +
+                       [a for a in _argv[1:] if a in ("--lan", "--open")])
         sys.exit(0)
     try:
         # 让任务栏用我们自己的图标，而不是 python 的

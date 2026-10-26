@@ -22,6 +22,19 @@ except Exception:
     ROOT = os.path.dirname(HERE)
 TOOLS = os.path.join(ROOT, "tools")
 
+# 解压上限（防压缩炸弹）。7z 自己不限大小，一个 1MB 的 gz 能写出 1GB，
+# 所以先用 `7z l -slt` 看声明大小，超限直接不解；解完再兜一次底。
+MAX_ENTRY = 256 * 1024 * 1024
+MAX_TOTAL = 1024 * 1024 * 1024
+
+
+def _human(n):
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return ("%d%s" % (n, u)) if u == "B" else ("%.1f%s" % (n, u))
+        n /= 1024.0
+    return "%.1fTB" % n
+
 
 def _first(paths):
     for p in paths:
@@ -90,12 +103,50 @@ def extract(path, outdir, timeout=120):
     exe = find_7z()
     if not exe:
         return False, [], "没找到 7z.exe"
+
+    # 先问 7z「解压后多大」，超限就别解了（否则会先写满磁盘再发现）。
+    # 必须带 -p（空密码）：加密包不带 -p 时 7z 会停在「输入密码」上等 stdin，
+    # 图形界面/网页版没有控制台，表现为卡住 120 秒（实测加密 7z 就是 2 分钟）。
+    try:
+        _rc, _out, _err = _run([exe, "l", "-slt", "-p", path], timeout=30)
+        _lo = (_out + _err).lower()
+        if ("cannot open encrypted" in _lo or "wrong password" in _lo
+                or "encrypted = +" in _lo):
+            return False, [], ("这个压缩包有密码，7z/rar 不会自动爆破"
+                               "（ZIP 会自动试弱口令；7z 请先手动解开或用 hashcat）")
+        sizes = [int(m.group(1)) for m in re.finditer(r"^Size = (\d+)$",
+                                                      _out, re.M)]
+        if sizes:
+            total = sum(sizes)
+            if max(sizes) > MAX_ENTRY or total > MAX_TOTAL:
+                return False, [], ("压缩包解压后 %s（单文件最大 %s），超过上限 %s，"
+                                   "已跳过（疑似压缩炸弹）"
+                                   % (_human(total), _human(max(sizes)),
+                                      _human(MAX_TOTAL)))
+    except Exception:
+        pass
+
     os.makedirs(outdir, exist_ok=True)
-    rc, out, err = _run([exe, "x", path, f"-o{outdir}", "-y", "-bd"], timeout=timeout)
-    files = []
+    rc, out, err = _run([exe, "x", "-p", path, f"-o{outdir}", "-y", "-bd"],
+                        timeout=timeout)
+    files, skipped = [], []
+    total = 0
     for dp, _, fs in os.walk(outdir):
         for f in fs:
-            files.append(os.path.join(dp, f))
+            p = os.path.join(dp, f)
+            try:
+                sz = os.path.getsize(p)
+            except OSError:
+                continue
+            if sz > MAX_ENTRY or total + sz > MAX_TOTAL:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+                skipped.append(os.path.basename(p))
+                continue
+            total += sz
+            files.append(p)
     if rc != 0 and not files:
         msg = (err or out).strip().splitlines()
         return False, [], "7z 解压失败：" + (msg[-1] if msg else f"返回码 {rc}")
@@ -103,6 +154,9 @@ def extract(path, outdir, timeout=120):
     low = (out + err).lower()
     if "wrong password" in low or "cannot open encrypted" in low:
         note = "（有密码，需要先破解）"
+    if skipped:
+        note += ("（跳过 %d 个超大文件，疑似压缩炸弹：%s）"
+                 % (len(skipped), ", ".join(skipped[:3])))
     return True, files, note
 
 
