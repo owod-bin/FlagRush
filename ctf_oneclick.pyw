@@ -116,6 +116,12 @@ class App:
         self.root = root
         set_theme(load_theme_pref())
         self._uiq = queue.Queue()      # 后台线程 → 主线程的界面操作队列
+        # 分析代号：每次「开始分析」或「停止」都 +1。
+        # 旧线程后续再往界面塞日志/状态时，代号对不上就直接丢弃 ——
+        # 否则用户点了停止，后台线程还在刷屏，看起来像没停住。
+        self._gen = 0
+        self._t0 = 0.0
+        self._analyzing = False
         self.last_result = None
         self.btns = {}
         self._build_all()
@@ -614,14 +620,24 @@ class App:
         if not d:
             return
         self.txt.delete("1.0", "end")
-        self.btn_go.configure(state="disabled", text="批量分析中…")
-        self.status.configure(text="正在批量分析…")
+        self._gen += 1
+        gen = self._gen
+        self._t0 = time.time()
+        self._analyzing = True
+        self.btn_go.configure(state="normal", text="■ 停止",
+                              command=self.stop_analyze, bg="#8b2f2f")
+        self.btn_folder.configure(state="disabled")
+        self.status.configure(text="正在批量分析… 已 0 秒")
+        self._tick(gen)
 
         def work():
             try:
                 rep = runner.batch_analyze(
                     d, progress=lambda i, n, name: self.ui_status(
-                        "批量分析 %d/%d：%s" % (i, n, name[:30])))
+                        "批量分析 %d/%d（已 %.0f 秒）：%s"
+                        % (i, n, time.time() - self._t0, name[:26])))
+                if gen != self._gen:
+                    return
                 self.log("文件夹：" + d, "h")
                 self.log("共 %d 个文件" % len(rep["files"]), "")
                 self.log("")
@@ -645,10 +661,10 @@ class App:
                                     "target": d, "flags": rep["flags"],
                                     "files": rep["files"], "errors": rep["errors"]}
             except Exception:
-                self.log(traceback.format_exc(), "err")
+                if gen == self._gen:
+                    self.log(traceback.format_exc(), "err")
             finally:
-                self.ui_btn(state="normal", text="一键分析")
-                self.ui_status("完成")
+                self._finish(gen, time.time() - self._t0)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -914,9 +930,12 @@ class App:
         self._ui(self.btn_go.configure, **kw)
 
     def log(self, s="", tag=None):
-        self._ui(self._log_sync, s, tag)
+        self._ui(self._log_sync, s, tag, self._gen)
 
-    def _log_sync(self, s, tag):
+    def _log_sync(self, s, tag, gen=None):
+        # 代号不匹配 = 这条日志来自已经「停止」的那次分析，丢掉
+        if gen is not None and gen != self._gen:
+            return
         try:
             self.txt.insert("end", s + "\n", tag or ())
             self.txt.see("end")
@@ -984,8 +1003,15 @@ class App:
             messagebox.showinfo("提示", "先在输入框里填文件路径 / 粘贴文本 / 粘贴 URL")
             return
         self.txt.delete("1.0", "end")
-        self.btn_go.configure(state="disabled", text="分析中…")
-        self.status.configure(text="正在分析…")
+        self._gen += 1
+        gen = self._gen
+        self._t0 = time.time()
+        self._analyzing = True
+        # 分析中按钮变成「停止」：用户不用再猜是不是卡死，随时能中止
+        self.btn_go.configure(state="normal", text="■ 停止",
+                              command=self.stop_analyze, bg="#8b2f2f")
+        self.status.configure(text="正在分析… 已 0 秒")
+        self._tick(gen)
 
         def work():
             try:
@@ -996,16 +1022,69 @@ class App:
                 else:
                     fn(val)
             except Exception:
-                self.log("出错了：", "err")
-                self.log(traceback.format_exc(), "err")
+                if gen == self._gen:
+                    self.log("出错了：", "err")
+                    self.log(traceback.format_exc(), "err")
             finally:
-                self.ui_btn(state="normal",
-                            text={"pwn": "一键 checksec",
-                                  "rsa": "一键破解",
-                                  "webscan": "开始扫描"}.get(self.cur, "一键分析"))
-                self.ui_status("完成")
+                self._finish(gen, time.time() - self._t0)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _tick(self, gen):
+        """分析中每 0.5 秒刷一次「已用时间」，让用户知道程序还活着"""
+        if gen != self._gen or not self._analyzing:
+            return
+        dt = time.time() - self._t0
+        tip = "正在分析… 已 %.0f 秒" % dt
+        if dt > 20:
+            tip += "（有点慢，可以点「停止」换分类型面板再试）"
+        try:
+            self.status.configure(text=tip)
+            self.root.after(500, lambda: self._tick(gen))
+        except Exception:
+            pass
+
+    def _finish(self, gen, dt):
+        """分析结束（正常/出错/超时都走这里）。
+
+        注意：这个方法是从**工作线程**的 finally 里调用的，
+        直接 configure Tk 控件会抛
+            RuntimeError: main thread is not in main loop
+        （实测点了第二次分析后按钮一直卡在「停止」）。
+        必须丢进 UI 队列，由主线程执行。
+        """
+        self._analyzing = False
+        self._ui(self._finish_ui, gen, dt)
+
+    def _finish_ui(self, gen, dt):
+        if gen != self._gen:
+            return
+        try:
+            self.btn_go.configure(
+                state="normal",
+                text={"pwn": "一键 checksec",
+                      "rsa": "一键破解",
+                      "webscan": "开始扫描"}.get(self.cur, "一键分析"),
+                command=self.run, bg=ACC)
+            self.btn_folder.configure(state="normal")
+            self.status.configure(text="完成（%.1f 秒）" % dt)
+        except Exception:
+            pass
+
+    def stop_analyze(self):
+        """用户点「停止」：放弃这次分析的结果，界面立刻可用"""
+        self._gen += 1          # 让旧线程后续的日志/状态全部失效
+        self._analyzing = False
+        self.btn_go.configure(state="normal", text="一键分析", command=self.run, bg=ACC)
+        try:
+            self.btn_folder.configure(state="normal")
+        except Exception:
+            pass
+        self.status.configure(text="已停止")
+        self.log("")
+        self.log("⚠ 已停止等待（后台可能还在收尾，但结果不再显示）", "warn")
+        self.log("   如果这道题一直很慢，试试只开对应的分类型面板（比如③逆向 / ②编码），"
+                 "不要用⓪一键。", "warn")
 
     # ---------------- 各方向
     def _panel(self, panel, value):

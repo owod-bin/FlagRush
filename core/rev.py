@@ -204,6 +204,16 @@ def decode_suspicious(ss, limit=12, min_len=8):
     return out
 
 
+_HINT_WORDS = ("flag", "correct", "wrong", "right", "password", "passwd",
+               "input", "enter", "please", "try", "again", "success",
+               "fail", "error", "invalid", "congrat", "welcome", "key",
+               "secret", "answer", "check", "verify", "access", "denied",
+               "granted", "username", "login", "level", "stage", "win",
+               "you", "your", "not", "the", "is", "are", "good", "bad")
+# 全是纯字母，用 | 拼起来与逐个 `in` 完全等价
+_HINT_RE = re.compile("|".join(_HINT_WORDS))
+
+
 def rank_strings(ss, imp_names=None, limit=30):
     """
     给字符串打分，把「像人话的」排前面。
@@ -215,12 +225,6 @@ def rank_strings(ss, imp_names=None, limit=30):
     打分：有空格/标点/常见提示词 → 加分；命中导入表/API 命名风格 → 减分
     """
     imp_names = imp_names or set()
-    HINT_WORDS = ("flag", "correct", "wrong", "right", "password", "passwd",
-                  "input", "enter", "please", "try", "again", "success",
-                  "fail", "error", "invalid", "congrat", "welcome", "key",
-                  "secret", "answer", "check", "verify", "access", "denied",
-                  "granted", "username", "login", "level", "stage", "win",
-                  "you", "your", "not", "the", "is", "are", "good", "bad")
 
     def score(s):
         low = s.lower()
@@ -237,7 +241,9 @@ def rank_strings(ss, imp_names=None, limit=30):
             sc += 3
         if any(c in s for c in "?!:"):
             sc += 2
-        if any(w in low for w in HINT_WORDS):
+        # 原来是 any(w in low for w in HINT_WORDS)：45 个词 × 12.9 万字符串
+        # = 580 万次子串查找（实测 1.5 秒）。预编译成一条正则一次扫完。
+        if _HINT_RE.search(low):
             sc += 3
         # API 命名风格：CamelCase 且没空格
         if " " not in s and re.fullmatch(r"[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+){1,}", s):
@@ -339,6 +345,10 @@ def _xor_scan_one(data, magic, max_hits=6, window=160):
         # 只做 1~4 字节密钥（等于 5 时「用 flag{ 反推」没有任何冗余约束，
         # 每个位置都会成为候选，等于没筛）。klen=4 冗余字节最少，
         # 靠 _decrypt_window 里的「flag 体形态」判据兜底。
+        # 窗口偏移表：_decrypt_window 解的是 [i-8, i+window)
+        _offs = np.arange(-8, window, dtype=np.int64)
+        _W = len(_offs)
+
         for klen in range(1, mlen):
             ok = np.ones(L, dtype=bool)
             for j in range(mlen):
@@ -347,17 +357,41 @@ def _xor_scan_one(data, magic, max_hits=6, window=160):
                     continue
                 ok &= (arr[j:j + L] ^ mg[j]) == (arr[m:m + L] ^ mg[m])
             idxs = np.nonzero(ok)[0]
-            for i in idxs:
-                i = int(i)
-                key = bytes(int(data[i + j]) ^ int(magic[j]) for j in range(klen))
-                if not key.strip(b"\x00"):
-                    continue
-                txt = _decrypt_window(data, i, key, window)
-                if txt and "flag{" in txt.lower() and txt not in seen:
-                    seen.add(txt)
-                    name = ("单字节 XOR 0x%02X" % key[0]) if klen == 1 else \
-                           ("循环密钥 %s（%d 字节）" % (key.hex(), klen))
-                    hits.append((name, i, txt))
+            if len(idxs) == 0:
+                continue
+            # 大文件（几十 MB 随机数据）里「自洽」的候选能有 20 万个，
+            # 逐个调 _decrypt_window 是 20000 万次 Python 迭代 ——
+            # 实测 26MB 的 PE 光这一步就要 13.6 秒（用户看到的就是「卡死」）。
+            # 这里先用 numpy 把整批候选一次性解密成 (K, W) 矩阵做同样的
+            # 可打印率/字母占比/花括号判据，只有通过的才走 Python 精处理。
+            # 判据与 _decrypt_window 完全一致，只是搬到了 numpy 里。
+            _kidx = _offs % klen
+            BATCH = 40000
+            for b0 in range(0, len(idxs), BATCH):
+                chunk = idxs[b0:b0 + BATCH]
+                keys = (arr[chunk[:, None] + np.arange(klen, dtype=np.int64)]
+                        ^ mg[:klen])                       # (K, klen)
+                pos = chunk[:, None] + _offs               # (K, W)
+                np.clip(pos, 0, n - 1, out=pos)
+                dec = arr[pos] ^ keys[:, _kidx]            # (K, W)
+                pr = ((dec >= 32) & (dec < 127)) | (dec == 9) | (dec == 10) | (dec == 13)
+                good = pr.mean(axis=1) >= 0.95
+                letters = ((dec >= 65) & (dec <= 90)) | ((dec >= 97) & (dec <= 122))
+                good &= letters.mean(axis=1) >= 0.6
+                good &= (dec == 0x7B).any(axis=1) & (dec == 0x7D).any(axis=1)
+                # 密钥全 0 等价于明文就是密文，跳过（与原来一致）
+                good &= keys.any(axis=1)
+                for k in np.nonzero(good)[0]:
+                    i = int(chunk[k])
+                    key = bytes(int(x) for x in keys[k])
+                    txt = _decrypt_window(data, i, key, window)
+                    if txt and "flag{" in txt.lower() and txt not in seen:
+                        seen.add(txt)
+                        name = ("单字节 XOR 0x%02X" % key[0]) if klen == 1 else \
+                               ("循环密钥 %s（%d 字节）" % (key.hex(), klen))
+                        hits.append((name, i, txt))
+                    if len(hits) >= max_hits * 3:
+                        break
                 if len(hits) >= max_hits * 3:
                     break
             if len(hits) >= max_hits * 3:
@@ -1344,11 +1378,26 @@ def analyze(path):
                 if pyi["pyz"]:
                     L.append(f"  PYZ 里的模块（前 20 个）：" + ", ".join(pyi["pyz"][:20]))
                 rep["suggest"].append("先看解包出来的 .pyc，pycdc 反编译；再看 PYZ 里有没有自定义模块名")
-                # 解包出来的文件里直接找 flag
+                # 解包出来的文件里直接找 flag。
+                # 必须设总量预算：一个 26MB 的 PyInstaller exe 能解出几百个文件，
+                # 原来对前 200 个各读 4MB（最多 800MB I/O + 800MB 正则），
+                # 实测光这一步就 17.5 秒 —— 用户看到的就是「卡死」。
+                # flag 只会出现在文本/脚本类文件里，大的二进制资源（data/ 下的
+                # .dll/.pyd/图片）读前 1MB 足够，且总量封顶 32MB。
+                _budget = 32 * 1024 * 1024
+                _seen_fp = 0
                 for fp in pyi["files"][:200]:
+                    if _budget <= 0:
+                        break
                     try:
+                        _sz = os.path.getsize(fp)
+                        if _sz > 8 * 1024 * 1024:
+                            continue
+                        _n = min(_sz, 4 * 1024 * 1024)
                         with open(fp, "rb") as f:
-                            blob = f.read(4 * 1024 * 1024)
+                            blob = f.read(_n)
+                        _budget -= len(blob)
+                        _seen_fp += 1
                         for m in re.finditer(
                                 rb"[A-Za-z0-9_]{0,12}[Ff][Ll][Aa][Gg][A-Za-z0-9_]{0,12}"
                                 rb"\{[^}\r\n\x00]{1,120}\}", blob):
@@ -1546,18 +1595,29 @@ def analyze(path):
                 if f not in rep["hits"]:
                     rep["hits"].append(f)
                     found_plain.append((off, f))
-        # UTF-16 全文再扫一遍（.NET / Java 的字符串是双字节，strings() 的
-        # 连续可打印过滤可能把长串切断）
+        # UTF-16 再扫一遍（.NET / Java 的字符串是双字节，strings() 的
+        # 连续可打印过滤可能把长串切断）。
+        #
+        # 必须限长度：26MB 的文件解码成 1300 万字符，再跑两次全文正则
+        # （le + be）—— 实测 17.5 秒，用户看到的就是「卡死」。
+        # 200MB 的文件更糟：解码后是 1 亿字符，光字符串对象就 400MB。
+        # flag 字符串只会出现在代码段/资源段，取「首 8MB + 尾 8MB」足够。
+        _MAX16 = 8 * 1024 * 1024
+        if len(data) > _MAX16 * 2:
+            _chunks = [data[:_MAX16], data[-_MAX16:]]
+        else:
+            _chunks = [data]
         for enc in ("utf-16-le", "utf-16-be"):
-            try:
-                t16 = data.decode(enc, "ignore")
-            except Exception:
-                continue
-            for m in re.finditer(pat_s, t16):
-                f = m.group()
-                if f not in rep["hits"]:
-                    rep["hits"].append(f)
-                    found_plain.append((-1, f + "（UTF-16 %s）" % enc))
+            for _ck in _chunks:
+                try:
+                    t16 = _ck.decode(enc, "ignore")
+                except Exception:
+                    continue
+                for m in re.finditer(pat_s, t16):
+                    f = m.group()
+                    if f not in rep["hits"]:
+                        rep["hits"].append(f)
+                        found_plain.append((-1, f + "（UTF-16 %s）" % enc))
         if found_plain:
             L.append("")
             L.append("== ★ 明文 flag（直接扫出来的）==")

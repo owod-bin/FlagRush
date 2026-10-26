@@ -32,6 +32,7 @@ SUITES = [
     ("实战集成", "core/battletest.py", 600, r"合计：(\d+)/(\d+)", False),
     ("新模块专项", "core/binary_ability_test.py", 600, r"新模块专项：(\d+)/(\d+)", False),
     ("古典端到端", "core/classic_e2e_test.py", 400, r"端到端通过 (\d+)/(\d+)", False),
+    ("健壮性专项", "core/robust_test.py", 600, r"结果：(\d+)/(\d+)", False),
     ("三对象（exe/bat/web）", "core/entrypoint_test.py", 700, r"三对象测试：(\d+)/(\d+)", True),
 ]
 

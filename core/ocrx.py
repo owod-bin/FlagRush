@@ -56,6 +56,47 @@ def is_portable(exe=None):
     return bool(exe) and os.path.isdir(os.path.join(os.path.dirname(exe), "tessdata"))
 
 
+_HEALTH = {"done": False, "ok": False, "why": ""}
+
+
+def health(exe=None):
+    """探一次 tesseract 能不能真的启动，结果缓存。
+
+    为什么必须探：Windows 上 tesseract 缺 DLL 时不会返回错误码，
+    而是弹一个**系统模态框**（"无法启动此程序，因为计算机中丢失 xxx.dll"），
+    进程卡在框上永不返回。pytesseract 的 timeout 只能杀掉进程本身，
+    但每一轮都要先等满 60 秒，四轮就是 4 分钟 —— 用户看到的就是「卡死」，
+    而且那个模态框会抢焦点，整个程序都点不动。
+
+    这里用 8 秒硬超时先跑一次 `--version`：
+      · 正常 → 缓存 ok=True，后面不再重复探测
+      · 失败 → 缓存 ok=False 并记下原因，整个分析过程直接跳过 OCR
+    """
+    if _HEALTH["done"]:
+        return _HEALTH["ok"], _HEALTH["why"]
+    _HEALTH["done"] = True
+    exe = exe or find_tesseract()
+    if not exe:
+        _HEALTH["why"] = "没找到 tesseract（包内便携版和系统都没找到）"
+        return False, _HEALTH["why"]
+    try:
+        flags = 0x08000000 if os.name == "nt" else 0    # CREATE_NO_WINDOW
+        pr = subprocess.run([exe, "--version"], capture_output=True,
+                            timeout=8, creationflags=flags)
+        out = ((pr.stdout or b"") + (pr.stderr or b"")).lower()
+        if pr.returncode == 0 and b"tesseract" in out:
+            _HEALTH["ok"] = True
+            return True, ""
+        _HEALTH["why"] = ("tesseract 启动失败（返回码 %d）—— 多半是缺 DLL，"
+                          "重新解压一份 tools/tesseract 即可" % pr.returncode)
+    except subprocess.TimeoutExpired:
+        _HEALTH["why"] = ("tesseract 8 秒没响应 —— 很可能缺 DLL 弹了系统错误框，"
+                          "已跳过 OCR（不影响其它功能）")
+    except Exception as e:
+        _HEALTH["why"] = "tesseract 无法启动：%s" % str(e)[:70]
+    return False, _HEALTH["why"]
+
+
 def _setup_cmd():
     """把 tesseract_cmd 设好。pytesseract 默认只在 PATH 里找，
     便携版和系统安装都不在 PATH，必须显式指定，否则 get_languages /
@@ -91,6 +132,9 @@ def ready():
         return False, ("tesseract 没找到。本工具应自带便携版（tools/tesseract/），"
                        "缺了可以重新解压一份；也可以自己装：\n"
                        "  winget install UB-Mannheim.TesseractOCR")
+    ok, why = health(exe)
+    if not ok:
+        return False, why
     try:
         ver = str(pytesseract.get_tesseract_version())
         tag = "便携版" if is_portable(exe) else "系统安装"
@@ -301,13 +345,14 @@ def ocr_image(path, lang=None, psm=3, retry_scale=2):
         try:
             # timeout 必须给：tesseract 如果缺 DLL，Windows 会弹「系统错误」模态框，
             # 进程卡在框上永不返回，pytesseract 就会一直等（用户看到界面卡在「分析中」）。
-            # 60 秒足够识别超大图，超时就报错而不是死等。
+            # 25 秒足够识别超大图（实测 4000×3000 的图 3 秒内出结果），
+            # 超时就报错而不是死等。
             txt = pytesseract.image_to_string(
                 im2, lang="+".join(use),
-                config="--psm %d%s" % (_psm, td_cfg), timeout=60)
+                config="--psm %d%s" % (_psm, td_cfg), timeout=25)
         except RuntimeError as e:
             if best_score < 0:
-                return "", ("识别超时（60 秒）—— 可能是 tesseract 缺 DLL 弹了系统错误框：%s"
+                return "", ("识别超时（25 秒）—— 可能是 tesseract 缺 DLL 弹了系统错误框：%s"
                             % str(e)[:60])
             continue
         except Exception as e:

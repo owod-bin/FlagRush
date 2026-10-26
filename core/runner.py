@@ -731,8 +731,73 @@ def to_sections(lines):
     return secs
 
 
-def run(panel, value, timeout=60):
-    """统一入口：返回 {ok, lines:[(text,tag)], sections, flags, error}"""
+def _auto_timeout(panel, value):
+    """按输入规模算一个合理的硬上限。
+
+    为什么需要：原来 run() 的 timeout 参数**根本没被使用**，
+    任何一步卡住（超大 PE、畸形压缩包、OCR 卡在系统弹框上）都会让
+    界面永远停在「正在分析…」—— 用户看到的就是「卡死」，只能强杀进程。
+
+    给得太紧会误杀正常的大文件，所以按体积线性放宽：
+      文本      120 秒（文本分析通常 <2 秒，120 秒只防死循环）
+      文件      120 秒 + 每 MB 2 秒，最多 300 秒
+    """
+    try:
+        v = str(value).strip().strip('"')
+        if panel not in TEXT_PANELS and os.path.isfile(v):
+            mb = os.path.getsize(v) / 1048576.0
+            return min(300, 120 + mb * 2)
+        return 120
+    except Exception:
+        return 120
+
+
+def run(panel, value, timeout=None):
+    """统一入口：返回 {ok, lines:[(text,tag)], sections, flags, error}
+
+    timeout：硬超时（秒）。None 表示按输入规模自动算（见 _auto_timeout）。
+    超时不会杀线程（Python 杀不掉），但会立刻返回一个明确的结果，
+    界面不会再无限转圈。
+    """
+    if timeout is None:
+        timeout = _auto_timeout(panel, value)
+
+    box = {}
+    done = threading.Event()
+
+    def _work():
+        try:
+            box["r"] = _run_impl(panel, value)
+        except BaseException as e:      # 兜底：线程里不能抛未捕获异常
+            box["e"] = e
+        finally:
+            done.set()
+
+    th = threading.Thread(target=_work, daemon=True, name="flagrush-analyze")
+    th.start()
+    if not done.wait(timeout):
+        msg = ("分析超过 %d 秒仍未结束 —— 这个文件可能特别大、结构异常，"
+               "或者某个外部工具卡住了。\n"
+               "可以先看已经输出的部分；也可以换「分类型面板」（比如只看逆向/只看隐写）"
+               "再试，或者用「十六进制」面板手动翻。" % int(timeout))
+        return {"ok": False, "error": msg, "timeout": True,
+                "lines": [("⚠ 分析超时", "err"), (msg, "err")],
+                "sections": [{"title": "⚠ 分析超时",
+                              "items": [{"t": msg, "tag": "err"}]}],
+                "flags": [], "files": [], "uploads": [], "webshell": []}
+    if "e" in box:
+        e = box["e"]
+        import traceback
+        tb = traceback.format_exc()
+        return {"ok": False, "error": str(e),
+                "lines": [("出错了：", "err"), (tb, "err")],
+                "sections": [{"title": "出错了", "items": [{"t": tb, "tag": "err"}]}],
+                "flags": []}
+    return box["r"]
+
+
+def _run_impl(panel, value):
+    """真正干活的部分（被 run() 放在工作线程里跑，便于加超时）"""
     fn = PANEL_FNS.get(panel)
     if not fn:
         return {"ok": False, "error": f"未知面板 {panel}", "lines": [],
