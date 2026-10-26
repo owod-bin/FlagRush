@@ -1135,7 +1135,7 @@ _OCR_SEEN = set()
 _OCR_MAX = 6                      # 一次分析最多 OCR 几张图（每张 0.5~1.5 秒）
 
 
-def _ocr_image(p, rep, tag=""):
+def _ocr_image(p, rep, tag="", skip_qr=False):
     """对一张图片做「二维码 + OCR 文字识别」，结果写进 rep。
 
     为什么必须抽成函数、并且对**每一份衍生图**都调用：
@@ -1178,8 +1178,14 @@ def _ocr_image(p, rep, tag=""):
     _OCR_SEEN.add(key)
     prefix = (tag + " ") if tag else ""
 
-    # 二维码：手机扫的那种，解出来常常就是 flag
+    # 二维码：手机扫的那种，解出来常常就是 flag。
+    # skip_qr：GIF 帧已经用 stego.gif_qr_scan 逐帧扫过并拼接了，
+    # 这里再扫一次只会把「帧01=S」重复打四遍，纯噪音。
+    if skip_qr:
+        qr = {}
     try:
+        if skip_qr:
+            raise ImportError
         import mediax
         qr = mediax.qr_decode(p)
         if qr.get("ok"):
@@ -1711,6 +1717,7 @@ def analyze(path, outdir=None, deep=True, verbose=True):
 
     # 5.4) 图片深挖：GIF 帧拆分 + 位平面（StegSolve 替代）
     if deep and data[:6] in (b"GIF87a", b"GIF89a") and stego:
+        qjoin = ""
         try:
             ok, files, note = stego.gif_frames(path, outdir)
             if ok:
@@ -1732,6 +1739,55 @@ def analyze(path, outdir=None, deep=True, verbose=True):
                         rep["flags"] += [x.decode("utf-8", "ignore") for x in h]
                     except Exception:
                         pass
+
+                # 逐帧二维码 —— CTF 有一种题：GIF 每帧画一个二维码，
+                # 每个码只存 1 个字符，必须逐帧解再按顺序拼接才是 flag。
+                # 实测 masterGO.gif（280x280，18 帧）= SYC{F1aSh_so_f4sT}。
+                # 不做这一步的话，工具只会说「GIF 已拆成 18 帧」，然后什么也没有。
+                try:
+                    qres, qjoin, qnote, qmiss = stego.gif_qr_scan(files)
+                    if qres:
+                        rep["extra"].append("★ GIF 逐帧二维码：" + qnote)
+                        _show = qres[:10]
+                        rep["extra"].append(
+                            "    " + "  ".join("帧%02d=%s" % (fi, tx) for fi, tx in _show)
+                            + ("" if len(qres) <= 10 else " …"))
+                        if qjoin:
+                            rep["extra"].append("★ 按帧序拼接：" + qjoin)
+                            _is_flag = bool(re.fullmatch(
+                                r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^}\r\n]{2,}\}",
+                                qjoin))
+                            if qmiss:
+                                # 有帧没解出 → 拼接结果少字符，可能是错位的，
+                                # 只提示不报 flag（否则会给出一个「看起来像 flag
+                                # 但内容错了」的结果，比不报更坑）
+                                rep["warn"].append(
+                                    "★ 有 %d 帧没解出二维码（第 %s 帧），拼接结果可能不完整，"
+                                    "请对照帧图人工核对" % (
+                                        len(qmiss),
+                                        ",".join(str(x) for x in qmiss[:8])))
+                                if _is_flag:
+                                    rep["extra"].append(
+                                        "  （形状像 flag，但因为缺帧，未计入命中）")
+                            elif _is_flag:
+                                if qjoin not in rep["flags"]:
+                                    rep["flags"].append(qjoin)
+                                rep["extra"].append("★ 拼接结果就是 flag：" + qjoin)
+                except Exception as _e:
+                    rep["extra"].append("  （逐帧二维码扫描跳过：%s）" % str(_e)[:50])
+
+                # 帧上如果是文字（不是二维码），也 OCR 一下。
+                # 两个限制：
+                #   · 二维码已经拼出 flag 就跳过（18 帧 OCR 要 12 秒，纯浪费）
+                #   · 只取前 4 帧，_OCR_MAX 全局配额是 6 张，
+                #     全扫会把后面真正需要 OCR 的图挤掉
+                try:
+                    if not (qjoin and re.fullmatch(
+                            r"[A-Za-z][A-Za-z0-9_]{1,15}\{[^}\r\n]{2,}\}", qjoin)):
+                        for f in files[:4]:
+                            _ocr_image(f, rep, "GIF 帧", skip_qr=True)
+                except Exception:
+                    pass
         except Exception:
             pass
     if deep and stego and data[:8] == b"\x89PNG\r\n\x1a\n" and size < 6 * 1024 * 1024 \

@@ -88,104 +88,135 @@ def _gif_lzw_decode(data, min_codesize, expect_pixels):
 
 
 def gif_frames(path, outdir=None, max_frames=40):
-    """
-    把 GIF 的每一帧导出成 PNG。
-    返回 (成功?, 文件列表, 说明)
-    """
-    data = open(path, "rb").read()
-    if data[:6] not in (b"GIF87a", b"GIF89a"):
-        return False, [], "不是 GIF"
-    pos = 6
-    sw, sh, flags, bg, aspect = struct.unpack("<HHBBB", data[pos:pos + 7])
-    pos += 7
-    gct = None
-    if flags & 0x80:
-        n = 2 << (flags & 0x07)
-        gct = data[pos:pos + n * 3]
-        pos += n * 3
-    if gct is None:
-        return False, [], "没有全局调色板，暂不支持"
+    """把 GIF 的每一帧导出成 PNG。返回 (成功?, 文件列表, 说明)
 
+    用 PIL 拆，不再手写 LZW。原因（实测 masterGO.gif，一个逐帧二维码题）：
+      那个 GIF 的逻辑画布写的是 **280x100**，但每帧的 image descriptor
+      是 **280x280**。手写解码按画布裁剪，导出的 18 帧全是**纯白**
+      （整张二维码正好被裁在画布外面），后面 OCR/二维码全都无从谈起。
+      PIL 按帧尺寸还原，并且正确处理 disposal / 局部帧 / 透明色。
+
+    旧实现（手写 LZW）保留在 _gif_lzw_decode / _deinterlace 里，仅供对照。
+    """
+    from PIL import Image, ImageSequence
+    try:
+        im = Image.open(path)
+    except Exception as e:
+        return False, [], "打不开：%s" % str(e)[:60]
     outdir = outdir or os.path.dirname(os.path.abspath(path))
+    try:
+        os.makedirs(outdir, exist_ok=True)
+    except Exception:
+        pass
     base = os.path.splitext(os.path.basename(path))[0]
     frames = []
-    idx = 0
-    while pos < len(data) and idx < max_frames:
-        b = data[pos]
-        if b == 0x3B:
-            break
-        if b == 0x21:                                   # 扩展块
-            label = data[pos + 1]
-            pos += 2
-            while pos < len(data) and data[pos] != 0:
-                pos += 1 + data[pos]
-            pos += 1
-            if label == 0xF9:
-                pass
-            continue
-        if b != 0x2C:
-            pos += 1
-            continue
-        left, top, w, h, lf = struct.unpack("<HHHHB", data[pos + 1:pos + 10])
-        pos += 10
-        ict = None
-        if lf & 0x80:
-            n = 2 << (lf & 0x07)
-            ict = data[pos:pos + n * 3]
-            pos += n * 3
-        palette = ict or gct
-        interlaced = bool(lf & 0x40)
-        if data[pos] == 0:
-            pos += 1
-            continue
-        min_cs = data[pos]
-        pos += 1
-        buf = bytearray()
-        while pos < len(data) and data[pos] != 0:
-            ln = data[pos]
-            buf += data[pos + 1:pos + 1 + ln]
-            pos += 1 + ln
-        pos += 1
-
-        pixels = _gif_lzw_decode(bytes(buf), min_cs, w * h)
-        if len(pixels) < w * h:
-            pixels += [0] * (w * h - len(pixels))
-        if interlaced:
-            pixels = _deinterlace(pixels, w, h)
-
-        rows = []
-        for y in range(h):
-            row = bytearray()
-            base_y = top + y
-            if base_y >= sh:
-                row += b"\x00\x00\x00" * w
-            else:
-                for x in range(w):
-                    i = pixels[y * w + x]
-                    pi = i * 3
-                    if pi + 2 < len(palette):
-                        row += palette[pi:pi + 3]
-                    else:
-                        row += b"\x00\x00\x00"
-            rows.append(bytes(row))
-
-        # 贴回整幅画布（GIF 帧可能只覆盖一部分，且与上一帧有关）
-        if not hasattr(gif_frames, "_canvas"):
-            gif_frames._canvas = [bytearray(b"\x00\x00\x00" * sw) for _ in range(sh)]
-        canvas = gif_frames._canvas
-        for y in range(h):
-            if top + y < sh:
-                canvas[top + y][left * 3:(left + w) * 3] = rows[y]
-        os.makedirs(outdir, exist_ok=True)      # outdir 可能是临时目录，没建就崩
-        dst = os.path.join(outdir, f"{base}_帧{idx + 1:02d}.png")
-        write_png(dst, sw, sh, [bytes(r) for r in canvas])
-        frames.append(dst)
-        idx += 1
-    if hasattr(gif_frames, "_canvas"):
-        del gif_frames._canvas
+    try:
+        for i, frame in enumerate(ImageSequence.Iterator(im)):
+            if i >= max_frames:
+                break
+            dst = os.path.join(outdir, "%s_帧%02d.png" % (base, i + 1))
+            frame.convert("RGB").save(dst)
+            frames.append(dst)
+    except Exception as e:
+        if not frames:
+            return False, [], "拆帧失败：%s" % str(e)[:60]
     if not frames:
         return False, [], "没有解出任何帧"
-    return True, frames, f"{sw}x{sh}，{idx} 帧"
+    try:
+        w, h = im.size
+    except Exception:
+        w = h = 0
+    return True, frames, "%dx%d，%d 帧" % (w, h, len(frames))
+
+
+_QR_DET = None
+
+
+def _qr_decode_file(path):
+    """单张图解二维码：先 pyzbar，失败再用 OpenCV。
+
+    为什么两级：
+      · pyzbar 对标准截图最稳，但要求四周有静区（quiet zone）。
+        很多题的二维码铺满整张图，直接扫是 0 结果。
+      · OpenCV 的 QRCodeDetector 对小尺寸/无静区的码更强。
+        实测 masterGO.gif 每帧只有 280x280、码贴边，pyzbar 全失败，
+        cv2 18 帧全解出（每帧一个字符）。
+    """
+    # ① pyzbar（补静区；倍数要逐个试，不能固定放大）
+    #    实测：290x290 的码在原尺寸能解，放大 2x/3x 反而全失败
+    #    （LANCZOS 插值把模块边缘插出灰度过渡，pyzbar 的二值化就判错了）；
+    #    而 280x280 无静区的码，放大才有用。所以 1x/2x/3x 都试。
+    try:
+        import pyzbar.pyzbar as pyzbar
+        from PIL import Image
+        img = Image.open(path).convert("L")
+        pad = max(16, int(max(img.size) * 0.15))
+        canvas = Image.new("L", (img.width + pad * 2, img.height + pad * 2), 255)
+        canvas.paste(img, (pad, pad))
+        for _sc in (1, 2, 3):
+            big = canvas if _sc == 1 else canvas.resize(
+                (canvas.width * _sc, canvas.height * _sc), Image.LANCZOS)
+            try:
+                rs = pyzbar.decode(big)
+            except Exception:
+                continue
+            for r in rs:
+                txt = (r.data or b"").decode("utf-8", "ignore").strip()
+                if txt:
+                    return txt
+    except Exception:
+        pass
+    # ② OpenCV 兜底
+    try:
+        global _QR_DET
+        import cv2
+        import numpy as np
+        from PIL import Image
+        if _QR_DET is None:
+            _QR_DET = cv2.QRCodeDetector()
+        arr = np.array(Image.open(path).convert("L"))
+        arr = cv2.copyMakeBorder(arr, 40, 40, 40, 40, cv2.BORDER_CONSTANT, value=255)
+        arr = cv2.resize(arr, None, fx=3, fy=3, interpolation=cv2.INTER_LANCZOS4)
+        txt, _pts, _ = _QR_DET.detectAndDecode(arr)
+        return (txt or "").strip()
+    except Exception:
+        return ""
+
+
+def gif_qr_scan(files, max_frames=40):
+    """逐帧扫二维码，并在「每帧只有一个字符」时按帧序拼起来。
+
+    CTF 里有一种题：GIF 每帧画一个二维码，每个码只存 1 个字符，
+    必须逐帧解再拼接才是 flag（masterGO.gif = SYC{F1aSh_so_f4sT}）。
+
+    返回 (results, joined, note, missing)
+      results: [(帧号, 内容), ...]，只含有码的帧
+      joined:  按帧序直接拼接的字符串（每帧都 ≤2 字符时才有意义）
+      note:    人话说明
+      missing: 没解出内容的帧号列表 —— 有缺帧时拼接结果是**不可信**的，
+               调用方必须提示用户，不能直接当成 flag
+    """
+    n = min(len(files), max_frames)
+    results = []
+    missing = []
+    for i, f in enumerate(files[:max_frames]):
+        txt = _qr_decode_file(f)
+        if txt:
+            results.append((i + 1, txt))
+        else:
+            missing.append(i + 1)
+    if not results:
+        return [], "", "逐帧都没扫到二维码", missing
+    joined = "".join(t for _, t in results)
+    # 每帧只有 1~2 个字符 → 基本可以确定是「逐帧拼 flag」的题
+    if all(len(t) <= 2 for _, t in results) and len(results) >= 3:
+        note = "%d/%d 帧有码，每帧 1~2 字符 → 已按帧序拼接" % (len(results), n)
+        if missing:
+            note += "（第 %s 帧没解出）" % ",".join(str(x) for x in missing[:8])
+    else:
+        joined = ""
+        note = "%d/%d 帧有码" % (len(results), n)
+    return results, joined, note, missing
 
 
 def _deinterlace(px, w, h):

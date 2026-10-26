@@ -44,13 +44,16 @@ if not defined PY (
   exit /b 1
 )
 
-echo 正在启动网页版（这个窗口别关，关了就停了）...
+echo 正在启动网页版...
+echo   （服务会在一个最小化的「CTF一把梭-网页版」窗口里跑，
+echo     这个窗口马上自动关闭，浏览器也会自动打开）
 start "CTF一把梭-网页版" /min "%PY%" "%~dp0core\webserver.py" 8083 --open
-timeout /t 2 >nul
 rem browser is opened by server (port may auto-switch)
 echo.
 echo   已打开：http://127.0.0.1:8083
 echo   队友访问：把本机 IP 发给他，用 http://本机IP:8083
 echo   搜索目录：%~dp0工作区   （把题目文件丢进去，网页上就能按关键词搜）
 echo.
-pause
+rem 不要 pause：服务在最小化的「CTF一把梭-网页版」窗口里跑，浏览器会自动打开。
+rem 这个窗口停着会让人以为卡死。想停服务就关掉任务栏里那个最小化窗口。
+exit /b 0

@@ -234,6 +234,48 @@ def _(d):
     patch_ihdr(p, height=256)                                            # 再改高度
 
 
+# ---------------------------------------------------------------- GIF 逐帧二维码
+def _mk_qr_gif(path, text, canvas=None, border=4):
+    """生成「每帧一个二维码、每码 1 个字符」的 GIF（复刻 masterGO.gif 那种题）
+
+    用 version=1 固定 21x21、border=4 标准静区、box_size=10：
+    尺寸正好 290x290，每个模块 10px 整数边界 —— 解码器最稳。
+    （试过 border=0 + resize 到 280：21 模块 → 13.33px/模块，
+      模块边界落在半个像素上，个别字符 cv2 死活解不出，
+      那是测试样本的问题，不是工具的问题。）
+    """
+    import qrcode
+    from PIL import Image
+    frames = []
+    for ch in text:
+        qr = qrcode.QRCode(version=1, border=border, box_size=10,
+                           error_correction=qrcode.constants.ERROR_CORRECT_M)
+        qr.add_data(ch)
+        qr.make(fit=False)
+        im = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+        frames.append(im)
+    frames[0].save(path, save_all=True, append_images=frames[1:],
+                   duration=100, loop=0)
+    if canvas:
+        # 模拟真实题：逻辑画布被改小（masterGO.gif 写的是 280x100，
+        # 但每帧的 image descriptor 是 280x280）。手写 LZW 按画布裁剪
+        # 会导出全白，必须用 PIL 按帧尺寸还原。
+        raw = bytearray(open(path, "rb").read())
+        struct.pack_into("<HH", raw, 6, canvas[0], canvas[1])
+        open(path, "wb").write(bytes(raw))
+
+
+@case("GIF", "每帧一个二维码（逐帧拼接成 flag）", "SYC{gif_frame_qr_ok}")
+def _(d):
+    _mk_qr_gif(os.path.join(d, "frames.gif"), "SYC{gif_frame_qr_ok}")
+
+
+@case("GIF", "画布被改小 + 每帧二维码（masterGO 复刻）", "SYC{canvas_hack_ok}")
+def _(d):
+    _mk_qr_gif(os.path.join(d, "canvas.gif"), "SYC{canvas_hack_ok}",
+               canvas=(280, 100))
+
+
 # ================================================================ 执行
 def run_one(c):
     d = tempfile.mkdtemp(prefix="stegotest_")
