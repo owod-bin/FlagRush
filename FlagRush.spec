@@ -26,6 +26,7 @@ CORE_MODULES = [
     "rsa", "rsa_adv", "forensic", "pwn", "stego", "spectro", "mediax",
     "archive", "unpack", "zipcrack", "hashcrack", "wordlist", "exttools",
     "flagfmt", "housekeep", "runner", "webserver", "imgadv", "envcheck", "paths",
+    "preflight_test",
     "encmore",
     # 第三轮新增：pcapng 解析 / webshell 解密 / APK 与 .NET 逆向
     "pcapx", "webshell", "revx",

@@ -180,6 +180,173 @@ def _search_files(q, limit=200):
     return results
 
 
+def _parse_multipart_stream(rfile, length, boundary, uploads_dir):
+    """流式解析 multipart/form-data，边读边写盘，返回 [(路径, 原始文件名)]。
+
+    为什么不用 `raw = rfile.read(ln)` + `raw.split(boundary)`：
+    实测 100MB 上传时服务 RSS 从 28MB 冲到 **328MB**（约 3 倍文件大小：
+    原始 body、split 出的 parts、每个 part 的 data 切片各存一份）。
+    上限 512MB 时峰值能到 1.5GB，比赛用的笔记本很容易被拖垮。
+    这里只保留一个 1MB 缓冲区，内存占用与文件大小无关。
+
+    解析状态：preamble → headers → data → after →（循环）→ done
+    """
+    bnd = boundary.encode("utf-8", "ignore")
+    first = b"--" + bnd                 # body 开头的分隔符（前面没有 \r\n）
+    delim = b"\r\n--" + bnd             # 后续分隔符
+
+    buf = b""
+    state = "preamble"
+    saved = []
+    cur = None
+    remaining = length
+    started = False
+
+    def _close_part():
+        nonlocal cur
+        if not cur:
+            return
+        try:
+            cur["f"].close()
+        except Exception:
+            pass
+        try:
+            os.replace(cur["tmp"], cur["dst"])
+            saved.append((cur["dst"], cur["name"]))
+        except Exception:
+            try:
+                os.remove(cur["tmp"])
+            except OSError:
+                pass
+        cur = None
+
+    def _abort():
+        nonlocal cur
+        if cur:
+            try:
+                cur["f"].close()
+            except Exception:
+                pass
+            try:
+                os.remove(cur["tmp"])
+            except OSError:
+                pass
+            cur = None
+
+    def _open_part(head):
+        nonlocal cur
+        if b'name="file"' not in head:
+            return
+        name = "upload.bin"
+        for line in head.split(b"\r\n"):
+            if b'filename="' in line:
+                seg = line.split(b'filename="')[1]
+                name = seg.split(b'"')[0].decode("utf-8", "replace")
+                break
+        safe = os.path.basename(name.replace("\\", "/")) or "upload.bin"
+        dst = os.path.join(uploads_dir, safe)
+        tmp = "%s.part.%d" % (dst, threading.get_ident())
+        cur = {"f": open(tmp, "wb"), "tmp": tmp, "dst": dst, "name": name}
+
+    try:
+        while remaining > 0:
+            chunk = rfile.read(min(1 << 20, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            buf += chunk
+
+            progressed = True
+            while progressed:
+                progressed = False
+
+                if state == "preamble":
+                    if not started:
+                        i = buf.find(first)
+                        if i < 0:
+                            if len(buf) > len(first) + 64:
+                                raise ValueError("multipart 格式不对（找不到起始 boundary）")
+                            break
+                        buf = buf[i + len(first):]
+                        started = True
+                    if buf.startswith(b"--"):
+                        state = "done"
+                        break
+                    if buf.startswith(b"\r\n"):
+                        buf = buf[2:]
+                        state = "headers"
+                        progressed = True
+                        continue
+                    if len(buf) < 2:
+                        break
+                    raise ValueError("multipart 格式不对（起始 boundary 后缺少换行）")
+
+                if state == "headers":
+                    j = buf.find(b"\r\n\r\n")
+                    if j < 0:
+                        if len(buf) > 64 * 1024:
+                            raise ValueError("multipart 头部过长")
+                        break
+                    head = buf[:j]
+                    buf = buf[j + 4:]
+                    _open_part(head)
+                    state = "data"
+                    progressed = True
+                    continue
+
+                if state == "data":
+                    k = buf.find(delim)
+                    if k < 0:
+                        # 没找到分隔符：把「确定属于文件内容」的部分写盘，
+                        # 尾部留 len(delim)-1 字节（分隔符可能被 chunk 切断）
+                        keep = len(delim) - 1
+                        if len(buf) > keep:
+                            if cur:
+                                cur["f"].write(buf[:-keep])
+                            buf = buf[-keep:]
+                        break
+                    if cur:
+                        cur["f"].write(buf[:k])
+                    _close_part()
+                    buf = buf[k + len(delim):]
+                    state = "after"
+                    progressed = True
+                    continue
+
+                if state == "after":
+                    if buf.startswith(b"--"):
+                        state = "done"
+                        break
+                    if buf.startswith(b"\r\n"):
+                        buf = buf[2:]
+                        state = "headers"
+                        progressed = True
+                        continue
+                    if len(buf) < 2:
+                        break
+                    raise ValueError("multipart 格式不对（分隔符后缺少换行）")
+
+                break
+
+            if state == "done":
+                break
+
+        _close_part()
+        if state != "done":
+            # 连接中断 / Content-Length 不对：已落盘的部分也删掉，
+            # 免得用户看到一个「半截文件」还以为上传成功了
+            for p, _n in saved:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            raise ValueError("上传不完整（连接中断或 Content-Length 不对）")
+    except Exception:
+        _abort()
+        raise
+    return saved
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "CTFYisaSuo/1.0"
 
@@ -596,51 +763,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send_json(
                         {"ok": False, "error": f"文件太大（{ln // 1048576}MB），上限 {MAX_UPLOAD // 1048576}MB。"
                                               "大文件请用桌面版，或直接把文件放进 工作区 目录后搜索。"}, 413)
-                raw = self.rfile.read(ln)
-                # 先确认 body 真的以这个 boundary 开头/结尾。
-                # 不校验的话，boundary 解析错时会「成功」保存一个带着
-                # multipart 分隔符的坏文件（实测 boundary 含 "boundary=" 时
-                # 落盘内容是 "CONTENT-OK\r\n------boundary=xyz--"）。
-                _delim = ("--" + boundary).encode("utf-8", "ignore")
-                if not raw.startswith(_delim):
-                    return self._send_json(
-                        {"ok": False, "error": "multipart 格式不对（boundary 不匹配）"}, 400)
-                parts = raw.split(_delim)
-                saved = []
-                for part in parts:
-                    if b"\r\n\r\n" not in part:
-                        continue
-                    head, data = part.split(b"\r\n\r\n", 1)
-                    if b'name="file"' not in head:
-                        continue
-                    # 只去掉 multipart 用来分隔 boundary 的那一个 \r\n。
-                    # 不能用 rstrip(b"\r\n") —— 它会把文件内容末尾所有 \r/\n 都削掉，
-                    # 实测上传的 pcap 被削掉 4 字节（HTTP 请求以 \r\n\r\n 结尾），
-                    # 导致包长度对不上、解析出 0 个包。这是二进制文件损坏级别的问题。
-                    if data.endswith(b"\r\n"):
-                        data = data[:-2]
-                    name = "upload.bin"
-                    for line in head.split(b"\r\n"):
-                        if b'filename="' in line:
-                            seg = line.split(b'filename="')[1]
-                            name = seg.split(b'"')[0].decode("utf-8", "replace")
-                            break
-                    safe = os.path.basename(name.replace("\\", "/"))
-                    dst = os.path.join(UPLOADS, safe)
-                    # 先写临时文件再原子替换：两个人同时传同名文件时，
-                    # 直接 open(dst,"wb") 有概率写出「前一半是 A、后一半是 B」的混合体。
-                    _tmp = "%s.part.%d" % (dst, threading.get_ident())
-                    try:
-                        with open(_tmp, "wb") as f:
-                            f.write(data)
-                        os.replace(_tmp, dst)
-                    finally:
-                        if os.path.exists(_tmp):
-                            try:
-                                os.remove(_tmp)
-                            except OSError:
-                                pass
-                    saved.append(dst)
+                if ln <= 0:
+                    return self._send_json({"ok": False, "error": "空请求"}, 400)
+                # 流式解析：内存只占 1MB，不再随文件大小涨（原来 100MB 上传
+                # 峰值 328MB，512MB 时能到 1.5GB）。
+                try:
+                    saved_pairs = _parse_multipart_stream(self.rfile, ln, boundary, UPLOADS)
+                except ValueError as e:
+                    return self._send_json({"ok": False, "error": str(e)}, 400)
+                saved = [p for p, _n in saved_pairs]
                 if not saved:
                     return self._send_json({"ok": False, "error": "没有解析到文件"})
                 return self._send_json({"ok": True, "files": saved})

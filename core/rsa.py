@@ -612,6 +612,9 @@ def analyze(text):
     for name, txt, note in ok:
         L.append(f"★ {name}{note or ''}")
         L.append(f"    {txt}")
-        if txt and ("flag" in txt.lower() or "{" in txt):
+        # 只有「真的像 flag」才算命中。
+        # 原来用的是 `"{" in txt`，实测 n=3233 这种小样本解出来的明文
+        # 恰好是单个 "{"，于是顶部显示「找到 flag：{」—— 比赛时非常误导。
+        if txt and re.search(r"[A-Za-z][A-Za-z0-9_\-]{1,19}\{[^}\r\n]{2,}\}", txt):
             rep["hits"].append(txt)
     return rep

@@ -691,6 +691,27 @@ def t_flagformat_bad_regex():
     return st == 400 and "正则" in (r.get("error") or ""), f"HTTP {st} {r.get('error','')[:40]}"
 
 
+def t_upload_large_binary():
+    """5MB 随机二进制上传：跨多个 1MB 读块，内容必须一字节不差"""
+    import hashlib
+    data = os.urandom(5 * 1024 * 1024)
+    bd = "----large"
+    body = (f"--{bd}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"large.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            ).encode() + data + f"\r\n--{bd}--\r\n".encode()
+    st, r = _post_raw("/api/upload", body,
+                      f"multipart/form-data; boundary={bd}")
+    if st != 200 or not r.get("ok"):
+        return False, f"HTTP {st} {r.get('error','')}"
+    got = open(r["files"][0], "rb").read()
+    try:
+        os.remove(r["files"][0])
+    except OSError:
+        pass
+    same = hashlib.md5(got).hexdigest() == hashlib.md5(data).hexdigest()
+    return same and len(got) == len(data), f"{len(got)} 字节 / 一致={same}"
+
+
 def t_hex_guard():
     """_allowed_read 必须拒绝系统文件（--lan 下的越权读取）"""
     bad = webserver._allowed_read("C:/Windows/win.ini")
@@ -847,6 +868,7 @@ def main():
     case("越权读取被拦（_allowed_read）", t_hex_guard)
     case("下载：文件名含 %41", t_download_percent)
     case("并发同名上传不损坏", t_concurrent_upload)
+    case("5MB 二进制上传一致", t_upload_large_binary)
     case("flag 格式：非法正则给 400", t_flagformat_bad_regex)
 
     srv.shutdown()

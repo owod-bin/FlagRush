@@ -1318,6 +1318,10 @@ if __name__ == "__main__":
     import traceback
     # 打包成 exe 后，用 --web 参数把同一个 exe 当网页版服务端跑
     _argv = [a for a in sys.argv[1:]]
+    # 赛前自检：比赛前在比赛机上跑一遍（双击「赛前自检.bat」也是走这个）
+    if _argv and _argv[0] == "--preflight":
+        import preflight_test
+        sys.exit(preflight_test.main())
     if _argv and _argv[0] == "--web":
         import webserver
         _port = 8083

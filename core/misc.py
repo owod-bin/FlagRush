@@ -1160,6 +1160,19 @@ def _ocr_image(p, rep, tag=""):
     if not (head[:8] == b"\x89PNG\r\n\x1a\n" or head[:2] in (b"\xff\xd8", b"BM")
             or head[:6] in (b"GIF87a", b"GIF89a")):
         return
+    # 从 exe/zip 里雕出来的小图（图标、光标、小 bmp）不值得 OCR：
+    # 实测 3MB 的 PyInstaller exe 会雕出 6 张 16~32px 资源图，每张约 1 秒，
+    # 白花 6 秒；更糟的是它们会把 _OCR_MAX 的名额占满，
+    # 真正该看的那张截图反而轮不到。
+    if "雕刻" in (tag or ""):
+        try:
+            from PIL import Image as _Img
+            with _Img.open(p) as _im:
+                _w, _h = _im.size
+            if _w < 160 or _h < 60:
+                return
+        except Exception:
+            return
     if sum(1 for x in rep["extra"] if "OCR 文字识别" in x) >= _OCR_MAX:
         return
     _OCR_SEEN.add(key)

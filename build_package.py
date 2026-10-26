@@ -148,6 +148,20 @@ timeout /t 5 >nul
 exit /b 0
 """)
 
+    write_bat(os.path.join(DIST, "赛前自检.bat"), r"""@echo off
+setlocal
+title FlagRush - 赛前自检
+cd /d "%~dp0"
+if not exist "FlagRush.exe" (
+  echo   [!] 找不到 FlagRush.exe
+  pause
+  exit /b 1
+)
+"FlagRush.exe" --preflight
+echo.
+pause
+""")
+
     write_bat(os.path.join(DIST, "队友也能用（局域网）.bat"), r"""@echo off
 setlocal
 title FlagRush - 局域网
